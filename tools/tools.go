@@ -1028,16 +1028,46 @@ func HexStringToBytes(s string) ([]byte, error) {
 	return data, nil
 }
 
-// BytesToHexString 将 []byte 转换为十六进制字符串，默认大写，每字节之间可加空格
+// BytesToHexString 将 []byte 数据转换为十六进制字符串
+//
+// 参数：
+//   - data: 待转换的字节数组
+//   - withSpace: 是否在每个字节之间添加空格，true 表示加空格，false 表示不加
+//
+// 返回值：
+//   - string: 转换后的十六进制字符串，字母默认大写
+//
+// 功能说明：
+//  1. 每个字节会转换为两位十六进制字符。
+//  2. 如果 withSpace 为 true，则每个字节之间用空格分隔。
+//  3. 转换后的字符串方便在日志、调试、网络协议打印等场景使用。
+//
+// 示例：
+//
+//	data := []byte{0x12, 0xAB, 0x34, 0xCD}
+//	// 不加空格
+//	hexStr := BytesToHexString(data, false)
+//	fmt.Println(hexStr) // 输出: "12AB34CD"
+//
+//	// 加空格
+//	hexStrWithSpace := BytesToHexString(data, true)
+//	fmt.Println(hexStrWithSpace) // 输出: "12 AB 34 CD"
 func BytesToHexString(data []byte, withSpace bool) string {
+	// 将字节数组编码为十六进制字符串（小写）
 	s := hex.EncodeToString(data)
+
 	if withSpace {
 		var parts []string
+		// 每两个字符为一组，对应原始字节
 		for i := 0; i < len(s); i += 2 {
+			// 转为大写并加入 parts 切片
 			parts = append(parts, strings.ToUpper(s[i:i+2]))
 		}
+		// 用空格连接每个字节的十六进制表示
 		return strings.Join(parts, " ")
 	}
+
+	// 不加空格，直接返回全部大写的十六进制字符串
 	return strings.ToUpper(s)
 }
 
@@ -1168,7 +1198,7 @@ func TimeToTimeStamp(t interface{}, isMilli bool) int64 {
 	return tt.Unix()
 }
 
-// GetRunPath 获取cmd终端目录或程序运行目录,
+// GetRunPath 获取当前cmd终端目录或当前程序运行目录
 //
 // 如果参数1 填写 true 则获取cmd终端目录，填写false 则返回程序所在目录
 func GetRunPath(cmd bool) string {
