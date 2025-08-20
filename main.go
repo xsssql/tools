@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"tools/tools"
+	"github.com/xsssql/tools/tools"
 )
 
 func main() {
