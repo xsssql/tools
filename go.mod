@@ -1,4 +1,4 @@
-module tools
+module github.com/xsssql/tools
 
 go 1.24
 
