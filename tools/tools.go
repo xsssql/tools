@@ -1847,18 +1847,15 @@ func HTMLConvert(data interface{}, encode bool) ([]byte, error) {
 	return []byte(html.UnescapeString(in)), nil
 }
 
-// CSVFieldMapper 自动识别和映射 CSV 表头及行数据，提供CSV字段名称直接去出字段对应的值,如果CSV 文件中每个字段是 "" 引号引起来的则需要 使用CleanStrings() 先去除首位的引号
+// CSVFieldMapper 自动识别和映射 CSV 表头及行数据，提供CSV字段名称直接取出字段对应的值,如果CSV 文件中每个字段是 "" 引号引起来的则需要 使用CleanStrings() 先去除首位的引号
 //
 // 参数:
 //   - fields: []string 传入 CSV 的表头或行数据（已按逗号分割好）
 //   - mapping: *map[string]int 传址 map
 //   - 当 isHeader = true 时：更新表头字段和位置的映射关系
 //   - 当 isHeader = false 时：通过字段名获取对应的行值
-//   - isHeader: bool
-//   - true  → 表示传入的是表头，自动计算字段在 CSV 中的位置并存入 mapping
-//   - false → 表示传入的是行数据，根据 mapping 提取对应字段内容
-//   - fieldName: string
-//   - 当 isHeader = false 时，用于指定要取的字段名
+//   - isHeader: bool - true  → 表示传入的是表头，自动计算字段在 CSV 中的位置并存入 mapping - false → 表示传入的是行数据，根据 mapping 提取对应字段内容
+//   - fieldName: string 当 isHeader = false 时，用于指定要取的字段名,注意如果是表头行的时候提供空则使用fields数组索引所有字段所在的位置
 //
 // 返回:
 //   - string: 如果是表头模式，返回 ""；如果是行数据模式，返回对应字段名的实际值
@@ -1898,6 +1895,72 @@ func CSVFieldMapper(fields []string, mapping *map[string]int, isHeader bool, fie
 	}
 
 	return fields[idx], nil
+}
+
+// CSVJoinFields 将 CSV 的字段数组组合为一行文本,中间使用英文的逗号连接
+//
+// 参数:
+//
+//	fields  []string - CSV 每列的数据
+//	quoted  bool     - 是否在每个字段前后加双引号，例如 true -> "value"
+//
+// 返回:
+//
+//	string - 拼接后的 CSV 行数据
+//
+// 注意:
+//  1. 如果 fields 为空，则返回空字符串
+//  2. 如果 quoted 为 true，会对每个字段加上双引号
+//  3. 不会自动处理字段中包含逗号或引号的情况，如需处理请自行转义
+func CSVJoinFields(fields []string, quoted bool) string {
+	if len(fields) == 0 {
+		return ""
+	}
+
+	result := ""
+	for i, field := range fields {
+		if quoted {
+			result += `"` + field + `"`
+		} else {
+			result += field
+		}
+
+		// 中间加逗号，最后一个字段不加
+		if i < len(fields)-1 {
+			result += ","
+		}
+	}
+
+	return result
+}
+
+// CSVFieldEditStrict 在 fields 中根据 mapping 找到 fieldName 对应的位置并替换为 value。
+// 严格模式：如果 mapping 缺失字段或索引超出当前 fields 长度，则返回错误（不会修改原切片）。
+//
+// 参数:
+// - fields: CSV 行的字段切片（例如从 strings.Split(line, ",") 得到的）
+// - mapping: 头->列索引映射，nil 会返回错误
+// - fieldName: 要修改的字段名（应在 mapping 中存在）
+// - value: 要写入的值
+//
+// 返回：修改后的 fields 切片（可能是同一个切片或新的切片）和错误
+func CSVFieldEditStrict(fields []string, mapping map[string]int, fieldName, value string) ([]string, error) {
+	if mapping == nil {
+		return fields, errors.New("mapping cannot be nil")
+	}
+	idx, ok := mapping[fieldName]
+	if !ok {
+		return fields, fmt.Errorf("field %q not found in mapping", fieldName)
+	}
+	if idx < 0 {
+		return fields, fmt.Errorf("invalid index %d for field %q", idx, fieldName)
+	}
+	if idx >= len(fields) {
+		return fields, fmt.Errorf("index %d out of range (fields length %d) for field %q", idx, len(fields), fieldName)
+	}
+	// 直接修改并返回
+	fields[idx] = value
+	return fields, nil
 }
 
 // URLEncodeDecode 进行 URL 编码或解码
