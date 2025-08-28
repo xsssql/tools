@@ -7,6 +7,6 @@ import (
 
 func main() {
 	_, resp := tools.HttpUrl("https://baidu.com/", "POST", nil, "", "User-Agent: GoClient/1.0", true, "", 60, 0, false)
-	fmt.Printf("%+v\n", resp)
+	fmt.Printf("%+v\n", resp.Body)
 
 }

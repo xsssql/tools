@@ -46,9 +46,9 @@ Cookie: PHPSESSION=55523704asafsdffg0
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36
 Connection: keep-alive
 `
-_, respHeader, respBody := tools.HttpUrl("https://baidu.com", "POST", []byte("a=1&b=2"), "PHPSESSION=AAAAA", head, true, "http://127.0.0.1:8080", 60, 0)
-fmt.Println("=== 返回协议头 ===", respHeader)
-fmt.Println("=== 响应内容 ===", string(respBody))
+_,resp := tools.HttpUrl("https://baidu.com", "POST", []byte("a=1&b=2"), "PHPSESSION=AAAAA", head, true, "http://127.0.0.1:8080", 60, 0,false)
+fmt.Println("=== 返回协议头 ===", resp.Headers)
+fmt.Println("=== 响应内容 ===", string(resp.Body))
 }
 
 ```
