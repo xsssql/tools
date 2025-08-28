@@ -84,7 +84,7 @@ type HttpResponse struct {
 //
 // -----------示例2:添加代理访问且Cookie设置为PHPSESSION=AAAAA--如果协议头中也包含Cookie则cookieGo字段优先级更高,优先使用cookieGo----
 //
-//	_, respHeader, respBody := tools.HttpUrl("https://baidu.com", "POST", []byte("a=1&b=2"), "PHPSESSION=AAAAA", head, true, "http://127.0.0.1:8080", 60, 0)
+//	_, resp := tools.HttpUrl("https://baidu.com", "POST", []byte("a=1&b=2"), "PHPSESSION=AAAAA", head, true, "http://127.0.0.1:8080", 60, 0,false)
 func HttpUrl(
 	urlStr string,
 	method string,

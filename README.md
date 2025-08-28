@@ -56,7 +56,9 @@ go语言开发常用函数，HTTP/https请求，通用类型转换
 
 #支持以下常用功能
 
-HttpUrl HTTP请求网页函数，支持HTTP2/HTTP1.1，下载文件默认最大支持200M
+//HttpUrl HTTP请求网页函数，支持HTTP2/HTTP1.1，下载文件默认最大支持200M
+
+//HttpUrlStruct() // HTTP请求网络 使用结构体请求，方便一些参数来回写很麻烦，用法和HttpUrl()一样
 
 // CreateDir 创建一个目录（如果父级目录不存在也会一并创建）
 
@@ -153,6 +155,9 @@ Windows 系列：Windows-1252（charmap.Windows1252）
 
 // CSVFieldMapper 自动识别和映射 CSV 表头及行数据，提供CSV字段名称直接去出字段对应的值,如果CSV 文件中每个字段是 "" 引号引起来的则需要 使用CleanStrings() 先去除首位的引号
 
+//CSVJoinFields(fields []string, quoted bool)  将 CSV 的字段数组组合为一行文本,中间使用英文的逗号连接
+
+//CSVFieldEditStrict(fields []string, mapping map[string]int, fieldName, value string)  CSVFieldEditStrict 在 fields 中根据 mapping 找到 fieldName 对应的位置并替换为 value
 
 // URLEncodeDecode 进行 URL 编码或解码
 
