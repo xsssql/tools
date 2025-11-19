@@ -60,6 +60,9 @@ go语言开发常用函数，HTTP/https请求，通用类型转换
 
 //HttpUrlStruct() // HTTP请求网络 使用结构体请求，方便一些参数来回写很麻烦，用法和HttpUrl()一样
 
+//	 textStr := RandStr(7,32) 生成随机字符
+//	 textStr := RandStr(2,32)
+
 // CreateDir 创建一个目录（如果父级目录不存在也会一并创建）
 
 // ToStr 将任意类型转换为 string，无法转换时返回 "" 不适用高标准环境

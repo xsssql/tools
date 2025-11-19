@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +32,64 @@ import (
 	"strings"
 	"time"
 )
+
+// RandStr 生成随机字符串
+// mode 采用按位组合：
+//
+//	1 -> 小写字母
+//	2 -> 数字
+//	4 -> 大写字母
+//	8 -> 特殊字符
+//
+// 可组合，例如：
+//
+//		3 = 1 + 2 → 小写 + 数字
+//		7 = 1 + 2 + 4 → 小写 + 数字 + 大写
+//		15 = 1 + 2 + 4 + 8 → 所有字符
+//	 textStr := RandStr(7,32)
+//	 textStr := RandStr(2,32)
+func RandStr(mode int, length int) string {
+	lower := "abcdefghijklmnopqrstuvwxyz"
+	digits := "0123456789"
+	upper := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	special := "!@#$%^&*()-_=+[]{}<>?/|"
+
+	charset := ""
+
+	// mode & 1 → 小写
+	if mode&1 > 0 {
+		charset += lower
+	}
+
+	// mode & 2 → 数字
+	if mode&2 > 0 {
+		charset += digits
+	}
+
+	// mode & 4 → 大写
+	if mode&4 > 0 {
+		charset += upper
+	}
+
+	// mode & 8 → 特殊字符
+	if mode&8 > 0 {
+		charset += special
+	}
+
+	// 如果模式非法（用户传入0等），则默认用数字
+	if charset == "" {
+		charset = digits
+	}
+
+	result := make([]byte, length)
+
+	for i := 0; i < length; i++ {
+		num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		result[i] = charset[num.Int64()]
+	}
+
+	return string(result)
+}
 
 // CreateDir 创建一个目录（如果父级目录不存在也会一并创建）
 func CreateDir(path string) error {
