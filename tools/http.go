@@ -38,9 +38,22 @@ type HttpResponse struct {
 	Proto      string              // 协议版本，如 HTTP/1.1
 	Status     string              // 状态文本，如 "200 OK" 或 "302 Found"
 	Headers    map[string][]string // 原始响应头
-	StatusLine string              //返回的歇一天第一行数据 HTTP/1.1 200 OK
+	StatusLine string              // 返回的第一行数据 HTTP/1.1 200 OK
 	RawHeaders string              // 格式化的头部文本
 	Body       []byte              // 响应体
+}
+
+// newEmptyResponse 创建一个空的响应结构体
+func newEmptyResponse() *HttpResponse {
+	return &HttpResponse{
+		StatusCode: 0,
+		Proto:      "",
+		Status:     "",
+		Headers:    make(map[string][]string),
+		StatusLine: "",
+		RawHeaders: "",
+		Body:       []byte{},
+	}
 }
 
 // HttpUrl HTTP请求网页函数，支持HTTP2/HTTP1.1，下载文件默认最大支持200M
@@ -51,40 +64,17 @@ type HttpResponse struct {
 //	method          请求模式，如 GET、POST、PUT 等
 //	postData        请求的POST数据，如果为空或GET请求填写 []byte("")
 //	cookieGo        请求的Cookie，如 _ga_0XM0LYXGC8=GS2.1.s1755523341$o1$g1
-//	headersTextGo   请求的协议头，多行请使用换行隔开，如:
-//	                User-Agent: Mozilla/5.0...
-//	                Accept: */*
+//	headersTextGo   请求的协议头，多行请使用换行隔开
 //	allowRedirects  是否重定向，重定向填写 true
 //	proxyGo         代理地址，如 http://127.0.0.1:8080 或 socks5://127.0.0.1:8080
 //	timeout         最大超时时间（秒）
 //	MaxResponseSize 下载最大返回包长度，如果填写 0，则最大返回长度为 200MB
+//	ignoreCertErrors 是否忽略证书错误
 //
 // 返回:
 //
-//	err             请求错误，nil 表示请求成功，否则返回实际错误
-//	ResponseHeader  返回的协议头
-//	ResponseBody    返回的网页实际数据
-//
-// 示例:
-//
-//	head := `Sec-Ch-Ua-Arch: "x86"
-//	Accept-Encoding: gzip
-//	Cookie: PHPSESSION=55523704asafsdffg0
-//	User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36
-//	Connection: keep-alive
-//	`
-//	//忽略证书错误
-//	_, resp := tools.HttpUrl("https://baidu.com/", "GET", nil, "", head, true, "", 15, 0, true)
-//	fmt.Sprintf("%+v", resp)
-//
-//
-//	_, resp :=tools.HttpUrl("https://baidu.com/", "POST", []byte("a=1&b=2"), "", "User-Agent: GoClient/1.0", true, "", 60, 0, false)
-//	fmt.Println("=== 返回协议头 ===", resp.RawHeaders)
-//	fmt.Println("=== 响应内容 ===", string(resp.Body))
-//
-// -----------示例2:添加代理访问且Cookie设置为PHPSESSION=AAAAA--如果协议头中也包含Cookie则cookieGo字段优先级更高,优先使用cookieGo----
-//
-//	_, resp := tools.HttpUrl("https://baidu.com", "POST", []byte("a=1&b=2"), "PHPSESSION=AAAAA", head, true, "http://127.0.0.1:8080", 60, 0,false)
+//	error           请求错误，nil 表示请求成功
+//	*HttpResponse   响应结构体，始终返回有效对象（即使出错也不会返回 nil）
 func HttpUrl(
 	urlStr string,
 	method string,
@@ -95,7 +85,7 @@ func HttpUrl(
 	proxyGo string,
 	timeout int,
 	MaxResponseSize int64,
-	ignoreCertErrors bool, // 新增参数：是否忽略证书错误
+	ignoreCertErrors bool,
 ) (error, *HttpResponse) {
 	// 设置最大返回包长度
 	if MaxResponseSize < 1 {
@@ -108,19 +98,19 @@ func HttpUrl(
 
 	// 创建HTTP客户端
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: ignoreCertErrors}, // 根据参数决定是否忽略证书错误
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: ignoreCertErrors},
 	}
 	if proxyGo != "" {
 		proxyUrl, err := url.Parse(proxyGo)
 		if err != nil {
-			return fmt.Errorf("error: parsing proxy URL: %s", err), nil
+			return fmt.Errorf("error: parsing proxy URL: %s", err), newEmptyResponse()
 		}
 		transport.Proxy = http.ProxyURL(proxyUrl)
 	}
 
 	// 启用HTTP/2支持
 	if err := http2.ConfigureTransport(transport); err != nil {
-		return fmt.Errorf("error: http2 configure: %s", err), nil
+		return fmt.Errorf("error: http2 configure: %s", err), newEmptyResponse()
 	}
 
 	client := &http.Client{
@@ -131,7 +121,7 @@ func HttpUrl(
 	// 创建请求
 	req, err := http.NewRequest(method, urlStr, bytes.NewBuffer(postData))
 	if err != nil {
-		return fmt.Errorf("error: new request: %s", err), nil
+		return fmt.Errorf("error: new request: %s", err), newEmptyResponse()
 	}
 
 	// 设置 Cookie
@@ -149,7 +139,7 @@ func HttpUrl(
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error: parsing headers: %s", err), nil
+		return fmt.Errorf("error: parsing headers: %s", err), newEmptyResponse()
 	}
 
 	// 禁止重定向时，返回原始响应
@@ -162,7 +152,7 @@ func HttpUrl(
 	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error: sending request: %s", err), nil
+		return fmt.Errorf("error: sending request: %s", err), newEmptyResponse()
 	}
 	defer resp.Body.Close()
 
@@ -170,10 +160,28 @@ func HttpUrl(
 	limitReader := &io.LimitedReader{R: resp.Body, N: MaxResponseSize + 1}
 	body, err := io.ReadAll(limitReader)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("error: reading body: %s", err), nil
+		// 即使读取失败，也返回部分响应信息
+		return fmt.Errorf("error: reading body: %s", err), &HttpResponse{
+			StatusCode: resp.StatusCode,
+			Proto:      resp.Proto,
+			Status:     resp.Status,
+			Headers:    resp.Header,
+			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+			RawHeaders: formatHeaders(resp.Header),
+			Body:       body, // 可能是部分数据
+		}
 	}
 	if limitReader.N <= 0 {
-		return fmt.Errorf("error: response exceeds max size"), nil
+		// 超过大小限制，但返回部分响应信息
+		return fmt.Errorf("error: response exceeds max size"), &HttpResponse{
+			StatusCode: resp.StatusCode,
+			Proto:      resp.Proto,
+			Status:     resp.Status,
+			Headers:    resp.Header,
+			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+			RawHeaders: formatHeaders(resp.Header),
+			Body:       body[:MaxResponseSize], // 截断到最大限制
+		}
 	}
 
 	// 解压缩（gzip/deflate/br/zstd）
@@ -182,50 +190,99 @@ func HttpUrl(
 	case "gzip":
 		r, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("error: gzip reader: %s", err), nil
+			return fmt.Errorf("error: gzip reader: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       body, // 返回未解压的数据
+			}
 		}
 		defer r.Close()
 		body, err = io.ReadAll(r)
 		if err != nil {
-			return fmt.Errorf("error: gzip read: %s", err), nil
+			return fmt.Errorf("error: gzip read: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       []byte{},
+			}
 		}
 	case "deflate":
 		r, err := zlib.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("error: deflate reader: %s", err), nil
+			return fmt.Errorf("error: deflate reader: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       body,
+			}
 		}
 		defer r.Close()
 		body, err = io.ReadAll(r)
 		if err != nil {
-			return fmt.Errorf("error: deflate read: %s", err), nil
+			return fmt.Errorf("error: deflate read: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       []byte{},
+			}
 		}
 	case "br":
 		r := brotli.NewReader(bytes.NewReader(body))
 		body, err = io.ReadAll(r)
 		if err != nil {
-			return fmt.Errorf("error: brotli read: %s", err), nil
+			return fmt.Errorf("error: brotli read: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       []byte{},
+			}
 		}
 	case "zstd":
 		dec, err := zstd.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("error: zstd reader: %s", err), nil
+			return fmt.Errorf("error: zstd reader: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       body,
+			}
 		}
 		defer dec.Close()
 		body, err = io.ReadAll(dec)
 		if err != nil {
-			return fmt.Errorf("error: zstd read: %s", err), nil
+			return fmt.Errorf("error: zstd read: %s", err), &HttpResponse{
+				StatusCode: resp.StatusCode,
+				Proto:      resp.Proto,
+				Status:     resp.Status,
+				Headers:    resp.Header,
+				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
+				RawHeaders: formatHeaders(resp.Header),
+				Body:       []byte{},
+			}
 		}
 	}
 
-	// 构造 RawHeaders
-	rawHeaders := ""
+	// 构造 StatusLine
 	statusLine := fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
-
-	for k, vals := range resp.Header {
-		for _, v := range vals {
-			rawHeaders += fmt.Sprintf("%s: %s\r\n", k, v)
-		}
-	}
 
 	// 返回结构体
 	return nil, &HttpResponse{
@@ -234,24 +291,26 @@ func HttpUrl(
 		Status:     resp.Status,
 		Headers:    resp.Header,
 		StatusLine: statusLine,
-		RawHeaders: rawHeaders,
+		RawHeaders: formatHeaders(resp.Header),
 		Body:       body,
 	}
 }
 
-// HTTP请求网络 使用结构体请求，方便一些参数来回写很麻烦，用法和HttpUrl()一样
+// formatHeaders 格式化响应头
+func formatHeaders(headers map[string][]string) string {
+	rawHeaders := ""
+	for k, vals := range headers {
+		for _, v := range vals {
+			rawHeaders += fmt.Sprintf("%s: %s\r\n", k, v)
+		}
+	}
+	return rawHeaders
+}
+
+// HttpUrlStruct HTTP请求网络 使用结构体请求
 func HttpUrlStruct(req *HttpRequest) (error, *HttpResponse) {
 	if req == nil {
-		// 返回一个初始化好的 HttpResponse，避免空指针
-		return fmt.Errorf("error: req is nil"), &HttpResponse{
-			StatusCode: 0,
-			Proto:      "",
-			Status:     "",
-			Headers:    make(map[string][]string),
-			StatusLine: "",
-			RawHeaders: "",
-			Body:       []byte{},
-		}
+		return fmt.Errorf("error: req is nil"), newEmptyResponse()
 	}
 
 	// 对结构体参数做默认值处理
@@ -269,7 +328,7 @@ func HttpUrlStruct(req *HttpRequest) (error, *HttpResponse) {
 	}
 
 	// 直接调用原来的 HttpUrl 函数
-	err, resp := HttpUrl(
+	return HttpUrl(
 		req.URL,
 		req.Method,
 		req.PostData,
@@ -281,19 +340,4 @@ func HttpUrlStruct(req *HttpRequest) (error, *HttpResponse) {
 		req.MaxResponseSize,
 		req.IgnoreCertErrors,
 	)
-
-	// 如果返回 nil，就初始化一个空结构体
-	if resp == nil {
-		resp = &HttpResponse{
-			StatusCode: 0,
-			Proto:      "",
-			Status:     "",
-			Headers:    make(map[string][]string),
-			StatusLine: "",
-			RawHeaders: "",
-			Body:       []byte{},
-		}
-	}
-
-	return err, resp
 }
