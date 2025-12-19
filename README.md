@@ -111,7 +111,7 @@ go语言开发常用函数，HTTP/https请求，通用类型转换
 
 // GetRunPath 获取当前cmd终端目录或当前程序运行目录
 
-// FileExists 判断文件是否存在 返回true表示存在
+// IsFileDirExists 判断文件是否存在 返回true表示存在
 
 // DeleteFileOrDir 删除文件或整个目录（包含内容）
 

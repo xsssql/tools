@@ -1283,8 +1283,8 @@ func GetRunPath(cmd bool) string {
 	return execDir
 }
 
-// FileExists 判断文件是否存在 返回true表示存在
-func FileExists(path string) bool {
+// IsFileDirExists 判断文件或目录是否存在 返回true表示存在
+func IsFileDirExists(path string) bool {
 	_, err := os.Stat(path)
 	if err == nil {
 		return true
