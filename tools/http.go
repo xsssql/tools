@@ -74,7 +74,7 @@ func newEmptyResponse() *HttpResponse {
 // 返回:
 //
 //	error           请求错误，nil 表示请求成功
-//	*HttpResponse   响应结构体，始终返回有效对象（即使出错也不会返回 nil）
+//	*HttpResponse   响应结构体，始终返回有效对象
 func HttpUrl(
 	urlStr string,
 	method string,
@@ -87,6 +87,17 @@ func HttpUrl(
 	MaxResponseSize int64,
 	ignoreCertErrors bool,
 ) (error, *HttpResponse) {
+	// 初始化响应结构体，确保始终返回有效对象
+	response := &HttpResponse{
+		StatusCode: 0,
+		Proto:      "",
+		Status:     "",
+		Headers:    make(http.Header),
+		StatusLine: "",
+		RawHeaders: "",
+		Body:       []byte{},
+	}
+
 	// 设置最大返回包长度
 	if MaxResponseSize < 1 {
 		MaxResponseSize = 200 * 1024 * 1024
@@ -103,14 +114,14 @@ func HttpUrl(
 	if proxyGo != "" {
 		proxyUrl, err := url.Parse(proxyGo)
 		if err != nil {
-			return fmt.Errorf("error: parsing proxy URL: %s", err), newEmptyResponse()
+			return fmt.Errorf("error: parsing proxy URL: %s", err), response
 		}
 		transport.Proxy = http.ProxyURL(proxyUrl)
 	}
 
 	// 启用HTTP/2支持
 	if err := http2.ConfigureTransport(transport); err != nil {
-		return fmt.Errorf("error: http2 configure: %s", err), newEmptyResponse()
+		return fmt.Errorf("error: http2 configure: %s", err), response
 	}
 
 	client := &http.Client{
@@ -121,7 +132,7 @@ func HttpUrl(
 	// 创建请求
 	req, err := http.NewRequest(method, urlStr, bytes.NewBuffer(postData))
 	if err != nil {
-		return fmt.Errorf("error: new request: %s", err), newEmptyResponse()
+		return fmt.Errorf("error: new request: %s", err), response
 	}
 
 	// 设置 Cookie
@@ -139,7 +150,7 @@ func HttpUrl(
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error: parsing headers: %s", err), newEmptyResponse()
+		return fmt.Errorf("error: parsing headers: %s", err), response
 	}
 
 	// 禁止重定向时，返回原始响应
@@ -152,7 +163,7 @@ func HttpUrl(
 	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error: sending request: %s", err), newEmptyResponse()
+		return fmt.Errorf("error: sending request: %s", err), response
 	}
 	defer resp.Body.Close()
 
@@ -168,7 +179,7 @@ func HttpUrl(
 			Headers:    resp.Header,
 			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 			RawHeaders: formatHeaders(resp.Header),
-			Body:       body, // 可能是部分数据
+			Body:       body,
 		}
 	}
 	if limitReader.N <= 0 {
@@ -180,7 +191,7 @@ func HttpUrl(
 			Headers:    resp.Header,
 			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 			RawHeaders: formatHeaders(resp.Header),
-			Body:       body[:MaxResponseSize], // 截断到最大限制
+			Body:       body[:MaxResponseSize],
 		}
 	}
 
@@ -197,7 +208,7 @@ func HttpUrl(
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
-				Body:       body, // 返回未解压的数据
+				Body:       body,
 			}
 		}
 		defer r.Close()
