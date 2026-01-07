@@ -449,7 +449,7 @@ func ToInt64Err(v interface{}) (int64, error) {
 	case int64:
 		return val, nil
 	case uint:
-		if val > math.MaxInt64 {
+		if uint64(val) > uint64(math.MaxInt64) {
 			return 0, fmt.Errorf("uint 值超出 int64 范围: %d", val)
 		}
 		return int64(val), nil
@@ -460,8 +460,8 @@ func ToInt64Err(v interface{}) (int64, error) {
 	case uint32:
 		return int64(val), nil
 	case uint64:
-		if val > math.MaxInt64 {
-			return 0, fmt.Errorf("uint64 值超出 int64 范围: %d", val)
+		if uint64(val) > uint64(math.MaxInt64) {
+			return 0, fmt.Errorf("uint 值超出 int64 范围: %d", val)
 		}
 		return int64(val), nil
 	case float32:
