@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -199,9 +198,13 @@ func HttpUrl(
 		}
 	}
 
-	cookie := mergeCookies(headerCookie, cookieGo)
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	cookieMap := mergeCookiesToMap(headerCookie, cookieGo)
+
+	for name, value := range cookieMap {
+		req.AddCookie(&http.Cookie{
+			Name:  name,
+			Value: value,
+		})
 	}
 
 	resp, err := client.Do(req)
@@ -240,7 +243,7 @@ func normalizeCookieInput(s string) string {
 }
 
 // mergeCookies 将协议头里面已经有的Cookie和cookieGo 想通的进行合并,cookieGo 优先级最高
-func mergeCookies(headerCookie, cookieGo string) string {
+func mergeCookiesToMap(headerCookie, cookieGo string) map[string]string {
 	m := make(map[string]string)
 
 	parse := func(s string) {
@@ -254,26 +257,38 @@ func mergeCookies(headerCookie, cookieGo string) string {
 				continue
 			}
 			kv := strings.SplitN(p, "=", 2)
-			if len(kv) == 2 {
-				m[kv[0]] = kv[1]
+			if len(kv) != 2 {
+				continue
 			}
+
+			name := strings.TrimSpace(kv[0])
+			value := strings.TrimSpace(kv[1])
+
+			if name == "" {
+				continue
+			}
+
+			// 🔥 关键：清洗 value
+			m[name] = sanitizeCookieValue(value)
 		}
 	}
 
 	parse(headerCookie)
 	parse(cookieGo)
 
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	return m
+}
 
-	var out []string
-	for _, k := range keys {
-		out = append(out, k+"="+m[k])
+func sanitizeCookieValue(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		// RFC + net/http 要求：不能有控制字符
+		if r < 32 || r == 127 {
+			continue
+		}
+		b.WriteRune(r)
 	}
-	return strings.Join(out, "; ")
+	return b.String()
 }
 
 // parseHeaders Header 解析
