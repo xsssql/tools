@@ -3,9 +3,11 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"crypto/tls"
+	"errors"
 	"fmt"
-	"golang.org/x/net/http2"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +16,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
+	"golang.org/x/net/http2"
 )
 
 // http请求 全局资源池
@@ -213,19 +219,114 @@ func HttpUrl(
 	}
 	defer resp.Body.Close()
 
+	// 限制响应大小
 	limit := &io.LimitedReader{R: resp.Body, N: MaxResponseSize + 1}
-	body, _ := io.ReadAll(limit)
-	if limit.N <= 0 {
-		body = body[:MaxResponseSize]
+	body, err := io.ReadAll(limit)
+	if err != nil && !errors.Is(err, io.EOF) {
+		// 读取失败，返回部分响应信息
+		respObj.StatusCode = resp.StatusCode
+		respObj.Status = resp.Status
+		respObj.Proto = resp.Proto
+		respObj.Headers = resp.Header
+		respObj.Body = body
+		respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
+		respObj.RawHeaders = formatHeaders(resp.Header)
+		return fmt.Errorf("error: reading body: %s", err), respObj
 	}
 
+	if limit.N <= 0 {
+		// 超过大小限制
+		body = body[:MaxResponseSize]
+		respObj.StatusCode = resp.StatusCode
+		respObj.Status = resp.Status
+		respObj.Proto = resp.Proto
+		respObj.Headers = resp.Header
+		respObj.Body = body
+		respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
+		respObj.RawHeaders = formatHeaders(resp.Header)
+		return fmt.Errorf("error: response exceeds max size"), respObj
+	}
+
+	// ========================================================================
+	// 修复：自动解压缩并清理Content-Encoding响应头
+	// ========================================================================
+	encoding := resp.Header.Get("Content-Encoding")
+	var decompressErr error
+
+	switch encoding {
+	case "gzip":
+		r, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			decompressErr = fmt.Errorf("gzip reader: %s", err)
+		} else {
+			defer r.Close()
+			body, err = io.ReadAll(r)
+			if err != nil {
+				decompressErr = fmt.Errorf("gzip read: %s", err)
+				body = []byte{} // 解压失败，清空body
+			} else {
+				// 解压成功，删除Content-Encoding头
+				resp.Header.Del("Content-Encoding")
+			}
+		}
+
+	case "deflate":
+		r, err := zlib.NewReader(bytes.NewReader(body))
+		if err != nil {
+			decompressErr = fmt.Errorf("deflate reader: %s", err)
+		} else {
+			defer r.Close()
+			body, err = io.ReadAll(r)
+			if err != nil {
+				decompressErr = fmt.Errorf("deflate read: %s", err)
+				body = []byte{}
+			} else {
+				// 解压成功，删除Content-Encoding头
+				resp.Header.Del("Content-Encoding")
+			}
+		}
+
+	case "br":
+		r := brotli.NewReader(bytes.NewReader(body))
+		body, err = io.ReadAll(r)
+		if err != nil {
+			decompressErr = fmt.Errorf("brotli read: %s", err)
+			body = []byte{}
+		} else {
+			// 解压成功，删除Content-Encoding头
+			resp.Header.Del("Content-Encoding")
+		}
+
+	case "zstd":
+		dec, err := zstd.NewReader(bytes.NewReader(body))
+		if err != nil {
+			decompressErr = fmt.Errorf("zstd reader: %s", err)
+		} else {
+			defer dec.Close()
+			body, err = io.ReadAll(dec)
+			if err != nil {
+				decompressErr = fmt.Errorf("zstd read: %s", err)
+				body = []byte{}
+			} else {
+				// 解压成功，删除Content-Encoding头
+				resp.Header.Del("Content-Encoding")
+			}
+		}
+	}
+
+	// 填充响应对象
 	respObj.StatusCode = resp.StatusCode
 	respObj.Status = resp.Status
 	respObj.Proto = resp.Proto
-	respObj.Headers = resp.Header
+	respObj.Headers = resp.Header // 这里已经是清理过Content-Encoding的头
 	respObj.Body = body
 	respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
-	respObj.RawHeaders = formatHeaders(resp.Header)
+	respObj.RawHeaders = formatHeaders(resp.Header) // 格式化后的头也不会包含Content-Encoding
+
+	// 如果解压失败，返回错误但仍返回响应对象
+	if decompressErr != nil {
+		return fmt.Errorf("error: decompression failed: %s", decompressErr), respObj
+	}
 
 	return nil, respObj
 }
@@ -242,7 +343,7 @@ func normalizeCookieInput(s string) string {
 	return s
 }
 
-// mergeCookies 将协议头里面已经有的Cookie和cookieGo 想通的进行合并,cookieGo 优先级最高
+// mergeCookiesToMap 将协议头里面已经有的Cookie和cookieGo 想通的进行合并,cookieGo 优先级最高
 func mergeCookiesToMap(headerCookie, cookieGo string) map[string]string {
 	m := make(map[string]string)
 
@@ -268,7 +369,6 @@ func mergeCookiesToMap(headerCookie, cookieGo string) map[string]string {
 				continue
 			}
 
-			// 🔥 关键：清洗 value
 			m[name] = sanitizeCookieValue(value)
 		}
 	}
@@ -279,6 +379,7 @@ func mergeCookiesToMap(headerCookie, cookieGo string) map[string]string {
 	return m
 }
 
+// sanitizeCookieValue 清洗Cookie值，移除控制字符
 func sanitizeCookieValue(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -361,7 +462,20 @@ func HttpUrlStruct(req *HttpRequest) (error, *HttpResponse) {
 	)
 }
 
-/*func HttpUrl_old(
+// mergeCookies 旧版合并Cookie函数（保留兼容性）
+func mergeCookies(headerCookie, cookieGo string) string {
+	m := mergeCookiesToMap(headerCookie, cookieGo)
+
+	var parts []string
+	for name, value := range m {
+		parts = append(parts, name+"="+value)
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+// HttpUrlOld 旧版HTTP请求函数（保留作为参考）
+func HttpUrlOld(
 	urlStr string,
 	method string,
 	postData []byte,
@@ -605,4 +719,3 @@ func HttpUrlStruct(req *HttpRequest) (error, *HttpResponse) {
 		Body:       body,
 	}
 }
-*/
