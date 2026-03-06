@@ -53,6 +53,8 @@ type HttpResponse struct {
 	Proto      string              // 协议版本，如 HTTP/1.1
 	Status     string              // 状态文本，如 "200 OK" 或 "302 Found"
 	Headers    map[string][]string // 原始响应头
+	HeadersMap map[string]string   // 原始响应头 快速获取返回协议头如HeadersMap["Set-Cookie"]
+	Cookie     string              //返回的协议头
 	StatusLine string              // 返回的第一行数据 HTTP/1.1 200 OK
 	RawHeaders string              // 格式化的头部文本
 	Body       []byte              // 响应体
@@ -227,6 +229,7 @@ func HttpUrl(
 		respObj.StatusCode = resp.StatusCode
 		respObj.Status = resp.Status
 		respObj.Proto = resp.Proto
+		respObj.HeadersMap, respObj.Cookie = buildHeadersMap(resp.Header) // 新增
 		respObj.Headers = resp.Header
 		respObj.Body = body
 		respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
@@ -240,6 +243,7 @@ func HttpUrl(
 		respObj.StatusCode = resp.StatusCode
 		respObj.Status = resp.Status
 		respObj.Proto = resp.Proto
+		respObj.HeadersMap, respObj.Cookie = buildHeadersMap(resp.Header) // 新增
 		respObj.Headers = resp.Header
 		respObj.Body = body
 		respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
@@ -318,7 +322,8 @@ func HttpUrl(
 	respObj.StatusCode = resp.StatusCode
 	respObj.Status = resp.Status
 	respObj.Proto = resp.Proto
-	respObj.Headers = resp.Header // 这里已经是清理过Content-Encoding的头
+	respObj.HeadersMap, respObj.Cookie = buildHeadersMap(resp.Header) // 新增
+	respObj.Headers = resp.Header                                     // 这里已经是清理过Content-Encoding的头
 	respObj.Body = body
 	respObj.StatusLine = fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status)
 	respObj.RawHeaders = formatHeaders(resp.Header) // 格式化后的头也不会包含Content-Encoding
@@ -329,6 +334,41 @@ func HttpUrl(
 	}
 
 	return nil, respObj
+}
+
+// buildHeadersMap 构建快速访问的响应头Map
+// Set-Cookie 特殊处理：只保留有效的 key=value 对，合并为分号分隔
+// 其他多值头部：合并为逗号分隔
+func buildHeadersMap(headers http.Header) (map[string]string, string) {
+	m := make(map[string]string)
+
+	for k, vals := range headers {
+		if strings.EqualFold(k, "Set-Cookie") {
+			// Set-Cookie 特殊处理
+			var validPairs []string
+			for _, line := range vals {
+				// Set-Cookie 每行格式: name=value; Path=/; HttpOnly; ...
+				// 只取第一个分号前的 name=value 部分
+				parts := strings.SplitN(line, ";", 2)
+				pair := strings.TrimSpace(parts[0])
+				// 必须包含 = 且 = 两侧都有内容
+				eqIdx := strings.Index(pair, "=")
+				if eqIdx <= 0 || eqIdx == len(pair)-1 {
+					continue // 丢弃：没有等号、key为空、value为空
+				}
+				validPairs = append(validPairs, pair)
+			}
+			if len(validPairs) > 0 {
+				m["Set-Cookie"] = strings.Join(validPairs, "; ")
+			}
+		} else {
+			// 其他头部：多值逗号合并
+			m[k] = strings.Join(vals, ", ")
+		}
+	}
+
+	cookie := m["Set-Cookie"]
+	return m, cookie
 }
 
 // normalizeCookieInput 去除cookieGo里面的cookie: 关键字
@@ -585,10 +625,13 @@ func HttpUrlOld(
 	body, err := io.ReadAll(limitReader)
 	if err != nil && !errors.Is(err, io.EOF) {
 		// 即使读取失败，也返回部分响应信息
+		HeadersMap, CookieStr := buildHeadersMap(resp.Header) // 新增
 		return fmt.Errorf("error: reading body: %s", err), &HttpResponse{
 			StatusCode: resp.StatusCode,
 			Proto:      resp.Proto,
 			Status:     resp.Status,
+			HeadersMap: HeadersMap,
+			Cookie:     CookieStr,
 			Headers:    resp.Header,
 			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 			RawHeaders: formatHeaders(resp.Header),
@@ -596,11 +639,14 @@ func HttpUrlOld(
 		}
 	}
 	if limitReader.N <= 0 {
+		HeadersMap, CookieStr := buildHeadersMap(resp.Header) // 新增
 		// 超过大小限制，但返回部分响应信息
 		return fmt.Errorf("error: response exceeds max size"), &HttpResponse{
 			StatusCode: resp.StatusCode,
 			Proto:      resp.Proto,
 			Status:     resp.Status,
+			HeadersMap: HeadersMap,
+			Cookie:     CookieStr,
 			Headers:    resp.Header,
 			StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 			RawHeaders: formatHeaders(resp.Header),
@@ -610,6 +656,7 @@ func HttpUrlOld(
 
 	// 解压缩（gzip/deflate/br/zstd）
 	encoding := resp.Header.Get("Content-Encoding")
+	HeadersMap, CookieStr := buildHeadersMap(resp.Header) // 新增
 	switch encoding {
 	case "gzip":
 		r, err := gzip.NewReader(bytes.NewReader(body))
@@ -618,6 +665,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -627,10 +676,13 @@ func HttpUrlOld(
 		defer r.Close()
 		body, err = io.ReadAll(r)
 		if err != nil {
+
 			return fmt.Errorf("error: gzip read: %s", err), &HttpResponse{
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -644,6 +696,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -657,6 +711,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -671,6 +727,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -684,6 +742,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -697,6 +757,8 @@ func HttpUrlOld(
 				StatusCode: resp.StatusCode,
 				Proto:      resp.Proto,
 				Status:     resp.Status,
+				HeadersMap: HeadersMap,
+				Cookie:     CookieStr,
 				Headers:    resp.Header,
 				StatusLine: fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status),
 				RawHeaders: formatHeaders(resp.Header),
@@ -713,6 +775,8 @@ func HttpUrlOld(
 		StatusCode: resp.StatusCode,
 		Proto:      resp.Proto,
 		Status:     resp.Status,
+		HeadersMap: HeadersMap,
+		Cookie:     CookieStr,
 		Headers:    resp.Header,
 		StatusLine: statusLine,
 		RawHeaders: formatHeaders(resp.Header),
