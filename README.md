@@ -166,9 +166,17 @@ Windows 系列：Windows-1252（charmap.Windows1252）
 
 // WriteToStingFile 将 []string数组写到文件，一般用于写出CSV文件比较方便,CSV文件每行组装后直接放到[]string 数组里面,最后统一写出
 
-// WriteToByteFile 将字节切片写入到指定文件
+//WriteToFile 高性能线程安全写文件函数,修改为支持文件追加文件首、文件尾、覆盖模式
 
-// CleanStrings 处理字符串切片：去除首尾双引号和空格 一般用于处理csv 行分割后的数据
+//DomainToIP 将域名解析为 IP 地址列表（支持 IPv4 和 IPv6）
+
+//FormatURL 格式化Url地址，自动为 URL 添加 http:// 或 https:// 前缀，默认添加https://
+
+//HashCalc 计算 hash 值,支持文件和[]byte数据
+
+//IsIPv4IPv6Domain 判断输入的字符串是域名、IPv4 还是 IPv6
+
+// CsvCleanStrings 原函数名称为CleanStrings处理字符串切片：去除首尾双引号和空格 一般用于处理csv 行分割后的数据
 
 // GetTextTwoMiddle 取两段文本中间
 
@@ -192,3 +200,70 @@ Windows 系列：Windows-1252（charmap.Windows1252）
 //	fmt.Println(numByte, cByte)//输出 [230 181 139 232 175 149]  ="测试"
 
 //	fmt.Println(numByte, tools.ToStr(cByte))//输出 "测试"
+
+//添加线程 	pool := NewPool[int](Options{
+Workers:    2,
+MaxWorkers: 16,
+QueueSize:  100,
+})
+
+//多线程使用实例
+
+
+// =============================================================================
+// 示例 1：简单爬虫任务（string 结果类型）
+// =============================================================================
+
+// ScrapeTask 模拟一个 HTTP 抓取任务，返回抓取到的页面内容（string）。
+type ScrapeTask struct {
+id  string // 任务唯一标识
+URL string // 目标 URL
+}
+
+func (t *ScrapeTask) TaskID() string { return t.id }
+
+// Run 模拟 HTTP 请求，随机等待 0~200ms 模拟网络延迟。
+// ctx 用于快速中断。
+func (t *ScrapeTask) Run(ctx context.Context) (string, error) {
+select {
+case <-time.After(time.Duration(rand.Intn(200)) * time.Millisecond):
+case <-ctx.Done():
+return "", ctx.Err()
+}
+return fmt.Sprintf("已抓取: %s", t.URL), nil
+}
+
+// Example_simpleScraper 演示最基础的用法
+func Example_simpleScraper() {
+// 创建一个处理 string 结果的 Pool
+pool := NewPool[string](Options{
+Workers:     3,                      // 初始启动 3 个 Worker goroutine
+MaxWorkers:  8,                      // 最多自动扩容到 8 个
+TaskTimeout: 5 * time.Second,        // 每个任务最多运行 5 秒
+MaxRetries:  2,                      // 失败后最多重试 2 次（共执行 3 次）
+RetryDelay:  200 * time.Millisecond, // 首次重试等 200ms，后续翻倍
+RateLimit:   10,                     // 每秒最多启动 10 个任务（间隔 100ms）
+})
+defer pool.StopGraceful()
+
+	tasks := []Task[string]{
+		&ScrapeTask{id: "t1", URL: "https://example.com/a"},
+		&ScrapeTask{id: "t2", URL: "https://example.com/b"},
+		&ScrapeTask{id: "t3", URL: "https://example.com/c"},
+	}
+
+	results := pool.SubmitAndCollect(tasks)
+	for _, r := range results {
+		if r.Err != nil {
+			fmt.Printf("[%s] 失败: %v\n", r.TaskID, r.Err)
+		} else {
+			fmt.Printf("[%s] 成功: %s\n", r.TaskID, r.Value)
+		}
+	}
+
+	// Output:
+	// [t1] 成功: 已抓取: https://example.com/a
+	// [t2] 成功: 已抓取: https://example.com/b
+	// [t3] 成功: 已抓取: https://example.com/c
+}
+

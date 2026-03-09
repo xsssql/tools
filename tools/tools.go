@@ -2,7 +2,11 @@ package tools
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +21,9 @@ import (
 	"golang.org/x/text/encoding/traditionalchinese"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
+	"hash"
+	"hash/crc32"
+	"hash/crc64"
 	"html"
 	"io"
 	"io/fs"
@@ -24,12 +31,15 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1443,16 +1453,6 @@ func ReadFile(filePath string) ([]byte, error) {
 	return data, nil
 }
 
-// WriteBytesToFile 将 byte 数据写入到指定文件
-func WriteBytesToFile(filePath string, data []byte) error {
-	// 使用 os.WriteFile 写入文件，权限设置为 0644（可读写）
-	err := os.WriteFile(filePath, data, 0644)
-	if err != nil {
-		return fmt.Errorf("写入文件失败: %v", err)
-	}
-	return nil
-}
-
 // CSVStringsToLine 将字符串切片转换为一行 CSV 格式的 []byte
 //
 // 参数：
@@ -2074,34 +2074,314 @@ func WriteToStingFile(fileName string, data []string, AddNewline bool) {
 
 }
 
-// WriteToByteFile 将字节切片写入到指定文件
-//
-// 参数：
-//   - fileName: 输出文件路径
-//   - data: 要写入的字节数据
-//
-// 功能：
-//  1. 如果文件不存在则创建；存在则覆盖
-//  2. 将 []byte 一次性写入文件
-//  3. 写入失败时打印错误信息
-func WriteToByteFile(fileName string, data []byte) {
-	// 创建/覆盖文件
-	file, err := os.Create(fileName)
-	if err != nil {
-		fmt.Println("创建文件失败:", fileName, err)
-		return
-	}
-	defer file.Close()
+// getFileLock 获取指定文件的锁
+// 如果锁不存在则创建
+func getFileLock(path string) *sync.Mutex {
 
-	// 写入数据
-	_, err = file.Write(data)
-	if err != nil {
-		fmt.Println("写入文件数据失败:", err)
+	// LoadOrStore：
+	// 如果 key 存在则返回已有值
+	// 如果不存在则存入新值
+	lock, _ := fileLocks.LoadOrStore(path, &sync.Mutex{})
+
+	return lock.(*sync.Mutex)
+}
+
+///////////////////////////////////////////////////////////////
+// 高性能线程安全写文件函数
+///////////////////////////////////////////////////////////////
+
+/*
+WriteToFile 高性能线程安全写文件函数
+
+参数说明：
+
+filePath
+
+	要写入的文件路径
+
+data
+
+	要写入的数据
+	支持类型：
+	    string
+	    []byte
+
+mode
+
+	写入模式：
+	    0 = 覆盖写入
+	    1 = 追加到文件尾部
+	    2 = 插入到文件开头
+
+函数特性：
+
+1 支持文件不存在自动创建
+2 支持多 goroutine 并发写
+3 每个文件独立锁（避免全局锁影响性能）
+
+使用方法:
+
+	WriteToFile("a.txt", "hello", FileAppend) //追加到尾部
+	WriteToFile("a.txt", "hello", 2) //插入到开头
+	WriteToFile("a.txt", "hello", 0) //覆盖写
+*/
+func WriteToFile(filePath string, data any, mode int) error {
+	// 获取该文件对应的锁
+
+	lock := getFileLock(filePath)
+
+	// 加锁
+	lock.Lock()
+
+	// 函数结束时自动解锁
+	defer lock.Unlock()
+
+	// 将 data 转换为 []byte
+	bytesData := ToBytes(data)
+
+	// 根据写入模式执行不同操作
+	switch mode {
+	// 覆盖写入模式
+	case FileOverwrite:
+
+		/*
+			os.WriteFile 行为：
+
+			1 如果文件不存在 -> 自动创建
+			2 如果文件存在 -> 清空文件内容
+			3 然后写入新数据
+		*/
+
+		return os.WriteFile(filePath, bytesData, 0644)
+
+	// 追加到文件尾部
+	case FileAppend:
+
+		/*
+			打开文件参数说明：
+
+			os.O_CREATE  文件不存在则创建
+			os.O_WRONLY  只写模式
+			os.O_APPEND  写入位置始终在文件末尾
+		*/
+
+		f, err := os.OpenFile(
+			filePath,
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+			0644,
+		)
+
+		if err != nil {
+			return err
+		}
+
+		// 函数结束自动关闭文件
+		defer f.Close()
+
+		// 写入数据
+		_, err = f.Write(bytesData)
+
+		return err
+
+	// 插入到文件开头
+	case FilePrepend:
+
+		/*
+			Go 标准库没有直接提供“头部插入”功能
+			需要手动实现：
+
+			步骤：
+
+			1 读取旧文件内容
+			2 新数据 + 旧数据 拼接
+			3 覆盖写入文件
+		*/
+
+		var old []byte
+
+		// 判断文件是否存在
+		if _, err := os.Stat(filePath); err == nil {
+
+			// 读取旧内容
+			old, err = os.ReadFile(filePath)
+
+			if err != nil {
+				return err
+			}
+		}
+
+		// 拼接数据
+		newData := append(bytesData, old...)
+		// 覆盖写入
+		return os.WriteFile(filePath, newData, 0644)
+	default:
+
+		return fmt.Errorf("未知写入模式")
 	}
 }
 
-// CleanStrings 处理字符串切片：去除首尾双引号和空格 一般用于处理csv 行分割后的数据
-func CleanStrings(input []string) []string {
+/*
+DomainToIP
+
+将域名解析为 IP 地址列表（支持 IPv4 和 IPv6）
+
+参数：
+
+	domain  要解析的域名，例如 example.com
+
+返回值：
+
+	[]string  解析得到的 IP 地址列表
+	bool      是否解析成功
+
+返回规则：
+
+	成功：
+	    ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"], true
+
+	失败：
+	    nil, false
+*/
+func DomainToIP(domain string) ([]string, bool) {
+
+	// 调用系统 DNS 解析
+	ips, err := net.LookupIP(domain)
+
+	// 如果解析失败
+	if err != nil || len(ips) == 0 {
+		return nil, false
+	}
+
+	// 存储最终 IP 字符串
+	var results []string
+
+	// 遍历解析结果
+	for _, ip := range ips {
+
+		// 转换为字符串
+		results = append(results, ip.String())
+	}
+
+	return results, true
+}
+
+// FormatURL 自动为 URL 添加 http:// 或 https:// 前缀，默认添加https://
+// 参数 urlStr: 待格式化的 URL 字符串
+// 返回值: 格式化后的 URL 字符串
+func FormatURL(urlStr string) string {
+	// 去掉首尾空格
+	urlStr = strings.TrimSpace(urlStr)
+	if urlStr == "" {
+		return urlStr
+	}
+
+	// 判断是否已经包含协议前缀
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		return urlStr // 已经有协议，直接返回
+	}
+
+	// 默认添加 https:// 前缀
+	return "https://" + urlStr
+}
+
+////////////////////////////////////////////////////////////
+// HashCalc
+////////////////////////////////////////////////////////////
+
+/*
+HashCalc 计算 hash 值
+
+参数：
+
+input
+
+	输入内容
+	如果 mode=HashInputText 表示文本
+	如果 mode=HashInputFile 表示文件路径
+
+mode
+
+	输入模式
+	1 = 文本
+	2 = 文件
+
+hashType hash类型:
+
+	HashMD5    = 1
+	HashSHA1   = 2
+	HashSHA224 = 3
+	HashSHA256 = 4
+	HashSHA384 = 5
+	HashSHA512 = 6
+	HashCRC32  = 7
+	HashCRC64  = 8
+
+返回：
+
+string  hash值(hex)
+bool    是否成功
+*/
+// CalcHash 支持 []byte 或文件路径（string）
+// data 可以是 []byte 或文件路径 string
+func HashCalc(data interface{}, mode int, hashType int) (string, bool) {
+	var reader io.Reader
+	if mode == 1 {
+		switch v := data.(type) {
+		case []byte:
+			reader = bytes.NewReader(v) // 内存数据
+		case string:
+			reader = bytes.NewReader([]byte(v))
+		default:
+			reader = bytes.NewReader(ToBytes(v))
+		}
+	} else {
+		file, err := os.Open(ToStr(data))
+		if err != nil {
+			return "", false
+		}
+		defer file.Close()
+		reader = file // 文件
+	}
+
+	var h hash.Hash
+
+	switch hashType {
+	case HashMD5:
+		h = md5.New()
+	case HashSHA1:
+		h = sha1.New()
+	case HashSHA224:
+		h = sha256.New224()
+	case HashSHA256:
+		h = sha256.New()
+	case HashSHA384:
+		h = sha512.New384()
+	case HashSHA512:
+		h = sha512.New()
+	case HashCRC32:
+		buf, _ := io.ReadAll(reader)
+		v := crc32.ChecksumIEEE(buf)
+		return fmt.Sprintf("%08x", v), true
+	case HashCRC64:
+		buf, _ := io.ReadAll(reader)
+		table := crc64.MakeTable(crc64.ISO)
+		v := crc64.Checksum(buf, table)
+		return fmt.Sprintf("%016x", v), true
+	default:
+		return "", false
+	}
+
+	// 对于 hash.Hash，流式计算（支持大文件）
+	_, err := io.Copy(h, reader)
+	if err != nil {
+		return "", false
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// CsvCleanStrings 处理字符串切片：去除首尾双引号和空格 一般用于处理csv 行分割后的数据
+func CsvCleanStrings(input []string) []string {
 	result := make([]string, 0, len(input))
 	for _, s := range input {
 		// 去除首尾双引号
@@ -2112,6 +2392,48 @@ func CleanStrings(input []string) []string {
 		result = append(result, s)
 	}
 	return result
+}
+
+// String 返回 AddressType 的字符串表示
+func (a AddressType) String() string {
+	switch a {
+	case IPv4:
+		return "IPv4"
+	case IPv6:
+		return "IPv6"
+	case Domain:
+		return "Domain"
+	default:
+		return "Unknown"
+	}
+}
+
+// IsIPv4IPv6Domain 判断输入的字符串是域名、IPv4 还是 IPv6
+// 参数 addr: 待判断的地址字符串
+// 返回值: AddressType 类型 返回 Unknown 标识不是ipv4也不是ipv6也不是域名
+func IsIPv4IPv6Domain(addr string) AddressType {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return Unknown
+	}
+
+	// 先尝试解析为 IP 地址
+	ip := net.ParseIP(addr)
+	if ip != nil {
+		if ip.To4() != nil {
+			return IPv4
+		}
+		return IPv6
+	}
+
+	// 域名正则校验（简单校验，不包含协议和路径）
+	domainRegex := `^([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$`
+	matched, _ := regexp.MatchString(domainRegex, addr)
+	if matched {
+		return Domain
+	}
+
+	return Unknown
 }
 
 // GetTextTwoMiddle 取两段文本中间
