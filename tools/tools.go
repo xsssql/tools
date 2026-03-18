@@ -1141,6 +1141,177 @@ func BytesToHexString(data []byte, withSpace bool) string {
 	return strings.ToUpper(s)
 }
 
+// ToBool 将任意类型转换为 bool，无法转换时返回 false 不适用高标准环境
+func ToBool(v interface{}) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case *bool:
+		if val != nil {
+			return *val
+		}
+
+	case string:
+		s := strings.TrimSpace(strings.ToLower(val))
+		if s == "true" || s == "1" || s == "yes" || s == "y" || s == "on" {
+			return true
+		}
+		return false
+	case *string:
+		if val != nil {
+			s := strings.TrimSpace(strings.ToLower(*val))
+			if s == "true" || s == "1" || s == "yes" || s == "y" || s == "on" {
+				return true
+			}
+		}
+
+	case []byte:
+		s := strings.TrimSpace(strings.ToLower(string(val)))
+		if s == "true" || s == "1" || s == "yes" || s == "y" || s == "on" {
+			return true
+		}
+		return false
+	case *([]byte):
+		if val != nil {
+			s := strings.TrimSpace(strings.ToLower(string(*val)))
+			if s == "true" || s == "1" || s == "yes" || s == "y" || s == "on" {
+				return true
+			}
+		}
+
+	case int:
+		return val != 0
+	case *int:
+		if val != nil {
+			return *val != 0
+		}
+
+	case int64:
+		return val != 0
+	case *int64:
+		if val != nil {
+			return *val != 0
+		}
+
+	case int32:
+		return val != 0
+	case *int32:
+		if val != nil {
+			return *val != 0
+		}
+
+	case float64:
+		return val != 0
+	case *float64:
+		if val != nil {
+			return *val != 0
+		}
+
+	case float32:
+		return val != 0
+	case *float32:
+		if val != nil {
+			return *val != 0
+		}
+
+	case json.Number:
+		f, err := val.Float64()
+		if err == nil {
+			return f != 0
+		}
+
+	default:
+		if v == nil {
+			return false
+		}
+		fmt.Printf("⚡ ToBool遇到未知类型：%T -> %+v\n", v, v)
+	}
+
+	return false
+}
+
+// ToBoolErr 将任意类型转换为 bool，无法转换时返回 error（适用于严格环境）
+func ToBoolErr(v interface{}) (bool, error) {
+	switch val := v.(type) {
+	case bool:
+		return val, nil
+	case *bool:
+		if val != nil {
+			return *val, nil
+		}
+		return false, fmt.Errorf("nil *bool")
+
+	case string:
+		return parseBoolStr(val)
+	case *string:
+		if val != nil {
+			return parseBoolStr(*val)
+		}
+		return false, fmt.Errorf("nil *string")
+
+	case []byte:
+		return parseBoolStr(string(val))
+	case *([]byte):
+		if val != nil {
+			return parseBoolStr(string(*val))
+		}
+		return false, fmt.Errorf("nil *[]byte")
+
+	case int:
+		return val != 0, nil
+	case *int:
+		if val != nil {
+			return *val != 0, nil
+		}
+		return false, fmt.Errorf("nil *int")
+
+	case int64:
+		return val != 0, nil
+	case *int64:
+		if val != nil {
+			return *val != 0, nil
+		}
+		return false, fmt.Errorf("nil *int64")
+
+	case int32:
+		return val != 0, nil
+	case *int32:
+		if val != nil {
+			return *val != 0, nil
+		}
+		return false, fmt.Errorf("nil *int32")
+
+	case float64:
+		return val != 0, nil
+	case *float64:
+		if val != nil {
+			return *val != 0, nil
+		}
+		return false, fmt.Errorf("nil *float64")
+
+	case float32:
+		return val != 0, nil
+	case *float32:
+		if val != nil {
+			return *val != 0, nil
+		}
+		return false, fmt.Errorf("nil *float32")
+
+	case json.Number:
+		f, err := val.Float64()
+		if err != nil {
+			return false, fmt.Errorf("json.Number 转 float64 失败: %w", err)
+		}
+		return f != 0, nil
+
+	default:
+		if v == nil {
+			return false, fmt.Errorf("nil value")
+		}
+		return false, fmt.Errorf("不支持的类型: %T", v)
+	}
+}
+
 // Base64Convert 通用 Base64 编码/解码函数
 //
 // 参数:
@@ -2516,7 +2687,7 @@ func GetTextTwoMiddle(sourceText string, startText string, endText string, start
 				return -1, ""
 			}
 
-		} else { //根本就不存在开始文本
+		} else {                          //根本就不存在开始文本
 			if fallbackToSource == true { //填写true 未找到返回原始文本
 				return -1, sourceTextTemp
 			}
