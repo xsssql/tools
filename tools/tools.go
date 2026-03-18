@@ -1230,6 +1230,19 @@ func ToBool(v interface{}) bool {
 	return false
 }
 
+func parseBoolStr(s string) (bool, error) {
+	str := strings.TrimSpace(strings.ToLower(s))
+
+	switch str {
+	case "true", "1", "yes", "y", "on":
+		return true, nil
+	case "false", "0", "no", "n", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("无法将字符串转换为bool: %s", s)
+	}
+}
+
 // ToBoolErr 将任意类型转换为 bool，无法转换时返回 error（适用于严格环境）
 func ToBoolErr(v interface{}) (bool, error) {
 	switch val := v.(type) {
@@ -2687,7 +2700,7 @@ func GetTextTwoMiddle(sourceText string, startText string, endText string, start
 				return -1, ""
 			}
 
-		} else {                          //根本就不存在开始文本
+		} else { //根本就不存在开始文本
 			if fallbackToSource == true { //填写true 未找到返回原始文本
 				return -1, sourceTextTemp
 			}
