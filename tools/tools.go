@@ -2700,7 +2700,7 @@ func GetTextTwoMiddle(sourceText string, startText string, endText string, start
 				return -1, ""
 			}
 
-		} else { //根本就不存在开始文本
+		} else {                          //根本就不存在开始文本
 			if fallbackToSource == true { //填写true 未找到返回原始文本
 				return -1, sourceTextTemp
 			}
@@ -2834,4 +2834,103 @@ func GetTextTwoMiddleBytes(sourceText, startText, endText []byte, startPosition 
 	}
 
 	return backEndPos, sourceText
+}
+
+// JsonGetByPathStr 根据路径获取 JSON 中的值
+// 如果获取失败直接返回空
+func JsonGetByPathStr(jsonData []byte, path string, rawJSON ...bool) string {
+	dataRaw, err := JsonGetByPath(jsonData, path, rawJSON...)
+	if err != nil {
+		return ""
+	}
+	return ToStr(dataRaw)
+}
+
+// JsonGetByPath 根据路径获取 JSON 中的值
+// jsonData 原始json数据
+// path 支持多层, 使用 "." 分隔, 比如 "TcpData.NodeUUID"
+// rawJSON 可选参数, 为 true 时返回未解析的原始 JSON 文本（保留原始字节）
+func JsonGetByPath(jsonData []byte, path string, rawJSON ...bool) ([]byte, error) {
+	if len(path) == 0 {
+		return nil, errors.New("empty path")
+	}
+
+	if len(rawJSON) > 0 && rawJSON[0] {
+		return JsonGetRawByPath(jsonData, path)
+	}
+
+	// 原有逻辑：顶层解析成 interface{}
+	var data interface{}
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return nil, err
+	}
+
+	parts := strings.Split(path, ".")
+	curr := data
+
+	for _, key := range parts {
+		switch node := curr.(type) {
+		case map[string]interface{}:
+			val, ok := node[key]
+			if !ok {
+				return nil, fmt.Errorf("JsonGetByPath key not found: %s", key)
+			}
+			curr = val
+		case []interface{}:
+			idx, err := strconv.Atoi(key)
+			if err != nil || idx < 0 || idx >= len(node) {
+				return nil, fmt.Errorf("JsonGetByPath invalid array index: %s", key)
+			}
+			curr = node[idx]
+		default:
+			return nil, fmt.Errorf("JsonGetByPath unexpected type at %s", key)
+		}
+	}
+
+	switch v := curr.(type) {
+	case string:
+		return []byte(v), nil
+	case float64, bool, int, int64:
+		return []byte(fmt.Sprintf("%v", v)), nil
+	default:
+		result, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+}
+
+// JsonGetRawByPath 逐层用 json.RawMessage 保留原始字节，避免二次 Marshal 破坏格式
+func JsonGetRawByPath(jsonData []byte, path string) ([]byte, error) {
+	parts := strings.Split(path, ".")
+	curr := json.RawMessage(jsonData)
+
+	for _, key := range parts {
+		// 先尝试解析为 object
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(curr, &obj); err == nil {
+			val, ok := obj[key]
+			if !ok {
+				return nil, fmt.Errorf("JsonGetByPath key not found: %s", key)
+			}
+			curr = val
+			continue
+		}
+
+		// 再尝试解析为 array
+		var arr []json.RawMessage
+		if err := json.Unmarshal(curr, &arr); err == nil {
+			idx, err := strconv.Atoi(key)
+			if err != nil || idx < 0 || idx >= len(arr) {
+				return nil, fmt.Errorf("JsonGetByPath invalid array index: %s", key)
+			}
+			curr = arr[idx]
+			continue
+		}
+
+		return nil, fmt.Errorf("JsonGetByPath unexpected type at %s", key)
+	}
+
+	return curr, nil
 }
