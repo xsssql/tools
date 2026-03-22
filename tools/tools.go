@@ -1632,8 +1632,12 @@ func copyFile(srcFile, dstFile string) error {
 func ReadFile(filePath string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return []byte(""), err
 	}
+
+	// 统一去掉UTF-8 BOM头，调用方完全不用关心
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+
 	return data, nil
 }
 
@@ -1779,60 +1783,53 @@ func FilterFileName(fullPath string, keywords []string) bool {
 //
 // 一般用于判断CSV文件编码是否为UTF-8，如果是GB2312则转换为UTF-8
 func GB2312ToUtf8(filePath string) error {
-	// 打开文件
-	file, err := os.Open(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("打开文件失败: %v", err)
-	}
-	defer file.Close()
-
-	// 读取前4KB用于编码检测
-	buf := make([]byte, 4096)
-	n, err := file.Read(buf)
-	if err != nil && err != io.EOF {
 		return fmt.Errorf("读取文件失败: %v", err)
 	}
-	sample := buf[:n]
 
-	// 使用 chardet 检测编码
+	// 检测BOM头 0xEF 0xBB 0xBF
+	// 如果有BOM说明是我们自己写出的UTF-8文件，100%确定，直接跳过
+	if bytes.HasPrefix(content, []byte{0xEF, 0xBB, 0xBF}) {
+		return nil
+	}
+
+	// 用chardet检测编码
 	detector := chardet.NewTextDetector()
-	result, err := detector.DetectBest(sample)
+	result, err := detector.DetectBest(content[:min(len(content), 4096)])
 	if err != nil {
 		return fmt.Errorf("编码检测失败: %v", err)
 	}
 
-	//fmt.Println("检测到编码:", result.Charset)
-
-	// 如果是 UTF-8，就不转换
+	// 如果chardet认为是UTF-8（没有BOM的UTF-8文件，非本程序产生的）
 	if strings.EqualFold(result.Charset, "UTF-8") {
-		//fmt.Println("文件是 UTF-8 编码, 无需转换")
 		return nil
 	}
 
-	// 目前只处理 GBK/GB2312 → UTF-8，其他编码类型暂不支持
-	if !strings.Contains(result.Charset, "GB") {
+	if !strings.Contains(strings.ToUpper(result.Charset), "GB") {
 		return fmt.Errorf("不支持的编码类型: %s", result.Charset)
 	}
 
-	fmt.Println("文件是 GBK/GB2312 编码，开始转换为 UTF-8...")
+	fmt.Println("检测到GBK/GB2312，开始转换...")
 
-	// 重新读取整个文件（从头开始）
-	file.Seek(0, io.SeekStart)
-	reader := transform.NewReader(file, simplifiedchinese.GBK.NewDecoder())
-
-	// 读取转换后的 UTF-8 内容
+	reader := transform.NewReader(
+		bytes.NewReader(content),
+		simplifiedchinese.GBK.NewDecoder(),
+	)
 	converted, err := io.ReadAll(reader)
 	if err != nil {
 		return fmt.Errorf("GB2312 转换失败: %v", err)
 	}
 
-	// 覆盖写入 UTF-8 编码文件
-	err = os.WriteFile(filePath, converted, 0644)
-	if err != nil {
-		return fmt.Errorf("写入 UTF-8 文件失败: %v", err)
+	// 写入时加上UTF-8 BOM头，作为"已转换"的永久标记
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	withBom := append(bom, converted...)
+
+	if err = os.WriteFile(filePath, withBom, 0644); err != nil {
+		return fmt.Errorf("写入文件失败: %v", err)
 	}
 
-	fmt.Println("转换完成，文件已保存为 UTF-8 编码")
+	fmt.Println("转换完成，已写入带BOM的UTF-8文件")
 	return nil
 }
 
@@ -1852,22 +1849,22 @@ FileToUTF8 将文件转为 UTF-8 编码，支持多种常见编码
 Windows 系列：Windows-1252（charmap.Windows1252）
 */
 func FileToUTF8(filePath string) error {
-	// 打开文件
-	file, err := os.Open(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("打开文件失败: %v", err)
 	}
-	defer file.Close()
 
-	// 读取前4KB用于编码检测
-	buf := make([]byte, 4096)
-	n, err := file.Read(buf)
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("读取文件失败: %v", err)
+	//  检测BOM，是本程序写出的UTF-8文件，100%确定直接跳过
+	if bytes.HasPrefix(content, []byte{0xEF, 0xBB, 0xBF}) {
+		return nil
 	}
-	sample := buf[:n]
 
-	// 检测文件编码
+	// chardet检测编码，此时面对的一定是非BOM文件
+	sample := content
+	if len(sample) > 10240 {
+		sample = sample[:10240]
+	}
+
 	detector := chardet.NewTextDetector()
 	result, err := detector.DetectBest(sample)
 	if err != nil {
@@ -1875,13 +1872,12 @@ func FileToUTF8(filePath string) error {
 	}
 	fmt.Println("检测到编码:", result.Charset)
 
-	// 如果是 UTF-8 就直接返回
+	// chardet明确识别为UTF-8（外部来源的无BOM文件）
 	if strings.EqualFold(result.Charset, "UTF-8") {
-		fmt.Println("文件已是 UTF-8，无需转换")
 		return nil
 	}
 
-	// 找到对应的编码
+	// 找对应解码器
 	enc := getEncoding(result.Charset)
 	if enc == nil {
 		return fmt.Errorf("暂不支持的编码类型: %s", result.Charset)
@@ -1889,23 +1885,19 @@ func FileToUTF8(filePath string) error {
 
 	fmt.Printf("文件是 %s 编码，开始转换为 UTF-8...\n", result.Charset)
 
-	// 从头读取
-	file.Seek(0, io.SeekStart)
-	reader := transform.NewReader(file, enc.NewDecoder())
-
-	// 转换为 UTF-8
+	reader := transform.NewReader(bytes.NewReader(content), enc.NewDecoder())
 	converted, err := io.ReadAll(reader)
 	if err != nil {
 		return fmt.Errorf("%s 转换失败: %v", result.Charset, err)
 	}
 
-	// 覆盖写回 UTF-8
-	err = os.WriteFile(filePath, converted, 0644)
-	if err != nil {
+	//  写入时加BOM，作为"已转换"的永久标记，下次调用直接第一关跳过
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	if err = os.WriteFile(filePath, append(bom, converted...), 0644); err != nil {
 		return fmt.Errorf("写入 UTF-8 文件失败: %v", err)
 	}
 
-	fmt.Println("转换完成，文件已保存为 UTF-8 编码")
+	fmt.Println("转换完成，文件已保存为带BOM的UTF-8编码")
 	return nil
 }
 
@@ -2567,7 +2559,11 @@ func HashCalc(data interface{}, mode int, hashType int) (string, bool) {
 // CsvCleanStrings 处理字符串切片：去除首尾双引号和空格 一般用于处理csv 行分割后的数据
 func CsvCleanStrings(input []string) []string {
 	result := make([]string, 0, len(input))
-	for _, s := range input {
+	for i, s := range input {
+		if i == 0 {
+			s = strings.TrimPrefix(s, "\ufeff") //  去掉BOM字符
+		}
+
 		// 去除首尾双引号
 		s = strings.Trim(s, `"`)
 		// 去除首尾空格
@@ -2700,7 +2696,7 @@ func GetTextTwoMiddle(sourceText string, startText string, endText string, start
 				return -1, ""
 			}
 
-		} else {                          //根本就不存在开始文本
+		} else { //根本就不存在开始文本
 			if fallbackToSource == true { //填写true 未找到返回原始文本
 				return -1, sourceTextTemp
 			}
