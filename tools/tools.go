@@ -2116,7 +2116,12 @@ func CSVFieldMapper(fields []string, mapping *map[string]int, isHeader bool, fie
 	if isHeader {
 		// 构建表头索引映射
 		for i, field := range fields {
-			(*mapping)[field] = i
+			_, exists := (*mapping)[field]
+			if !exists {
+				(*mapping)[field] = i
+			} else {
+				fmt.Printf("\033[31mError: Duplicate field found in CSV header, please reinitialize the CSV file: %s\033[0m\n", field)
+			}
 		}
 		return "", nil
 	}
@@ -2696,7 +2701,7 @@ func GetTextTwoMiddle(sourceText string, startText string, endText string, start
 				return -1, ""
 			}
 
-		} else { //根本就不存在开始文本
+		} else {                          //根本就不存在开始文本
 			if fallbackToSource == true { //填写true 未找到返回原始文本
 				return -1, sourceTextTemp
 			}
