@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -265,141 +266,245 @@ func ToStrErr(v interface{}) (string, error) {
 
 // ToBytes 将任意类型转换为 []byte，无法转换时返回空切片
 func ToBytes(v interface{}) []byte {
-	var str string
-
-	switch val := v.(type) {
-	case string:
-		str = val
-	case *string:
-		if val != nil {
-			str = *val
-		}
-	case int:
-		str = strconv.Itoa(val)
-	case *int:
-		if val != nil {
-			str = strconv.Itoa(*val)
-		}
-	case int64:
-		str = strconv.FormatInt(val, 10)
-	case *int64:
-		if val != nil {
-			str = strconv.FormatInt(*val, 10)
-		}
-	case int32:
-		str = strconv.Itoa(int(val))
-	case *int32:
-		if val != nil {
-			str = strconv.Itoa(int(*val))
-		}
-	case float64:
-		str = fmt.Sprintf("%f", val)
-	case *float64:
-		if val != nil {
-			str = fmt.Sprintf("%f", *val)
-		}
-	case float32:
-		str = fmt.Sprintf("%f", val)
-	case *float32:
-		if val != nil {
-			str = fmt.Sprintf("%f", *val)
-		}
-	case bool:
-		str = strconv.FormatBool(val)
-	case *bool:
-		if val != nil {
-			str = strconv.FormatBool(*val)
-		}
-	case json.Number:
-		str = val.String()
-	default:
-		if v == nil {
-			return []byte{}
-		}
-		fmt.Printf("⚡ ToBytes 遇到未知类型：%T -> %+v\n", v, v)
-		str = fmt.Sprintf("%v", v)
+	if v == nil {
+		return []byte{}
 	}
 
-	return []byte(str)
+	switch val := v.(type) {
+
+	// ===== 二进制优先 =====
+	case []byte:
+		return val
+
+	case *[]byte:
+		if val != nil {
+			return *val
+		}
+		return []byte{}
+
+	case json.RawMessage:
+		return val
+
+	// ===== 字符串 =====
+	case string:
+		return []byte(val)
+
+	case *string:
+		if val != nil {
+			return []byte(*val)
+		}
+		return []byte{}
+
+	case []rune:
+		return []byte(string(val))
+
+	// ===== 标准接口 =====
+	case error:
+		return []byte(val.Error())
+
+	case fmt.Stringer:
+		return []byte(val.String())
+
+	// ===== 时间 =====
+	case time.Time:
+		return []byte(val.Format("2006-01-02 15:04:05"))
+
+	case *time.Time:
+		if val != nil {
+			return []byte(val.Format("2006-01-02 15:04:05"))
+		}
+		return []byte{}
+
+	// ===== 整数 =====
+	case int:
+		return []byte(strconv.Itoa(val))
+
+	case *int:
+		if val != nil {
+			return []byte(strconv.Itoa(*val))
+		}
+		return []byte{}
+
+	case int64:
+		return []byte(strconv.FormatInt(val, 10))
+
+	case *int64:
+		if val != nil {
+			return []byte(strconv.FormatInt(*val, 10))
+		}
+		return []byte{}
+
+	case int32:
+		return []byte(strconv.Itoa(int(val)))
+
+	case *int32:
+		if val != nil {
+			return []byte(strconv.Itoa(int(*val)))
+		}
+		return []byte{}
+
+	// ===== 浮点（修复精度问题）=====
+	case float64:
+		return []byte(strconv.FormatFloat(val, 'f', -1, 64))
+
+	case *float64:
+		if val != nil {
+			return []byte(strconv.FormatFloat(*val, 'f', -1, 64))
+		}
+		return []byte{}
+
+	case float32:
+		return []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))
+
+	case *float32:
+		if val != nil {
+			return []byte(strconv.FormatFloat(float64(*val), 'f', -1, 32))
+		}
+		return []byte{}
+
+	// ===== bool =====
+	case bool:
+		return []byte(strconv.FormatBool(val))
+
+	case *bool:
+		if val != nil {
+			return []byte(strconv.FormatBool(*val))
+		}
+		return []byte{}
+
+	case json.Number:
+		return []byte(val.String())
+	}
+
+	// ===== 反射兜底 =====
+	rv := reflect.ValueOf(v)
+
+	switch rv.Kind() {
+
+	case reflect.Map, reflect.Struct:
+		b, err := json.Marshal(v)
+		if err == nil {
+			return b
+		}
+
+	case reflect.Slice, reflect.Array:
+		//排除 []byte
+		if rv.Type().Elem().Kind() == reflect.Uint8 {
+			if b, ok := v.([]byte); ok {
+				return b
+			}
+		}
+
+		b, err := json.Marshal(v)
+		if err == nil {
+			return b
+		}
+	}
+
+	// ===== 打印日志=====
+	fmt.Printf("⚡ ToBytes fallback: %T -> %+v\n", v, v)
+
+	return []byte(fmt.Sprintf("%v", v))
 }
 
 // ToBytesErr 将任意类型转换为 []byte，转换失败返回错误
 func ToBytesErr(v interface{}) ([]byte, error) {
 	if v == nil {
-		return nil, fmt.Errorf("值为 nil")
+		return nil, fmt.Errorf("val is nil")
 	}
-
-	var str string
 
 	switch val := v.(type) {
+
+	case []byte:
+		return val, nil
+
+	case *[]byte:
+		if val != nil {
+			return *val, nil
+		}
+		return nil, fmt.Errorf("*[]byte is nil")
+
 	case string:
-		str = val
+		return []byte(val), nil
+
 	case *string:
 		if val != nil {
-			str = *val
-		} else {
-			return nil, fmt.Errorf("*string 为 nil")
+			return []byte(*val), nil
 		}
+		return nil, fmt.Errorf("*string is nil")
+
+	case json.RawMessage:
+		return val, nil
+
+	case error:
+		return []byte(val.Error()), nil
+
+	case fmt.Stringer:
+		return []byte(val.String()), nil
+
+	case time.Time:
+		return []byte(val.Format("2006-01-02 15:04:05")), nil
+
+	case *time.Time:
+		if val != nil {
+			return []byte(val.Format("2006-01-02 15:04:05")), nil
+		}
+		return nil, fmt.Errorf("*time.Time is nil")
+
+	case []rune:
+		return []byte(string(val)), nil
+
 	case int:
-		str = strconv.Itoa(val)
-	case *int:
-		if val != nil {
-			str = strconv.Itoa(*val)
-		} else {
-			return nil, fmt.Errorf("*int 为 nil")
-		}
+		return []byte(strconv.Itoa(val)), nil
+
 	case int64:
-		str = strconv.FormatInt(val, 10)
-	case *int64:
-		if val != nil {
-			str = strconv.FormatInt(*val, 10)
-		} else {
-			return nil, fmt.Errorf("*int64 为 nil")
-		}
+		return []byte(strconv.FormatInt(val, 10)), nil
+
 	case int32:
-		str = strconv.Itoa(int(val))
-	case *int32:
-		if val != nil {
-			str = strconv.Itoa(int(*val))
-		} else {
-			return nil, fmt.Errorf("*int32 为 nil")
-		}
+		return []byte(strconv.Itoa(int(val))), nil
+
 	case float64:
-		str = fmt.Sprintf("%f", val)
-	case *float64:
-		if val != nil {
-			str = fmt.Sprintf("%f", *val)
-		} else {
-			return nil, fmt.Errorf("*float64 为 nil")
-		}
+		return []byte(strconv.FormatFloat(val, 'f', -1, 64)), nil
+
 	case float32:
-		str = fmt.Sprintf("%f", val)
-	case *float32:
-		if val != nil {
-			str = fmt.Sprintf("%f", *val)
-		} else {
-			return nil, fmt.Errorf("*float32 为 nil")
-		}
+		return []byte(strconv.FormatFloat(float64(val), 'f', -1, 32)), nil
+
 	case bool:
-		str = strconv.FormatBool(val)
-	case *bool:
-		if val != nil {
-			str = strconv.FormatBool(*val)
-		} else {
-			return nil, fmt.Errorf("*bool 为 nil")
-		}
+		return []byte(strconv.FormatBool(val)), nil
+
 	case json.Number:
-		str = val.String()
-	default:
-		return nil, fmt.Errorf("未知类型: %T", v)
+		return []byte(val.String()), nil
 	}
 
-	return []byte(str), nil
+	// ===== fallback =====
+	rv := reflect.ValueOf(v)
+
+	switch rv.Kind() {
+
+	case reflect.Map, reflect.Struct:
+		return json.Marshal(v)
+
+	case reflect.Slice, reflect.Array:
+		// 排除 []byte
+		if rv.Type().Elem().Kind() == reflect.Uint8 {
+			return v.([]byte), nil
+		}
+		return json.Marshal(v)
+	default:
+		return nil, fmt.Errorf("unsupported type: %T", v)
+	}
+
 }
 
 // ToInt64 将任意类型转换为 int64，无法转换时或超出范围时返回 0
 func ToInt64(v interface{}) int64 {
+	if v == nil {
+		return 0
+	}
+
 	switch val := v.(type) {
+
+	// ===== 整数 =====
 	case int:
 		return int64(val)
 	case int8:
@@ -410,6 +515,8 @@ func ToInt64(v interface{}) int64 {
 		return int64(val)
 	case int64:
 		return val
+
+	// ===== 无符号 =====
 	case uint:
 		return int64(val)
 	case uint8:
@@ -419,35 +526,88 @@ func ToInt64(v interface{}) int64 {
 	case uint32:
 		return int64(val)
 	case uint64:
-		if val <= 1<<63-1 {
+		if val <= math.MaxInt64 {
 			return int64(val)
 		}
 		return 0
+
+	// ===== 浮点 =====
 	case float32:
 		return int64(val)
 	case float64:
 		return int64(val)
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
+		}
+		return 0
+
+	// ===== string =====
 	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
+		s := strings.TrimSpace(val)
+
+		// 优先 int
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i
+		}
+
+		// 再 float
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int64(f)
+		}
+
+		return 0
+
+	// ===== []byte =====
+	case []byte:
+		return ToInt64(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return i
+		}
+		if f, err := val.Float64(); err == nil {
+			return int64(f)
+		}
+		return 0
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToInt64(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return val.Unix()
+	}
+
+	// ===== 反射兜底 =====
+	rv := reflect.ValueOf(v)
+
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
 			return 0
 		}
-		return int64(f)
-	case []byte:
-		valData, _ := strconv.ParseInt(string(val), 10, 64)
-		return valData
-	default:
-		return 0
+		return ToInt64(rv.Elem().Interface())
 	}
+
+	return 0
 }
 
 // ToInt64WithErr 将任意类型转换为 int64，无法转换或超出范围时返回错误
 func ToInt64Err(v interface{}) (int64, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0, fmt.Errorf("val is nil")
 	}
 
 	switch val := v.(type) {
+
+	// ===== 整数 =====
 	case int:
 		return int64(val), nil
 	case int8:
@@ -458,304 +618,607 @@ func ToInt64Err(v interface{}) (int64, error) {
 		return int64(val), nil
 	case int64:
 		return val, nil
+
+	// ===== 无符号 =====
 	case uint:
-		if uint64(val) > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("uint 值超出 int64 范围: %d", val)
+		if uint64(val) > math.MaxInt64 {
+			return 0, fmt.Errorf("uint overflow")
 		}
 		return int64(val), nil
-	case uint8:
-		return int64(val), nil
-	case uint16:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
+
 	case uint64:
-		if uint64(val) > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("uint 值超出 int64 范围: %d", val)
+		if val > math.MaxInt64 {
+			return 0, fmt.Errorf("uint64 overflow")
 		}
 		return int64(val), nil
+
+	case uint8, uint16, uint32:
+		return int64(reflect.ValueOf(val).Uint()), nil
+
+	// ===== 浮点 =====
 	case float32:
-		if val > float32(math.MaxInt64) || val < float32(math.MinInt64) {
-			return 0, fmt.Errorf("float32 值超出 int64 范围: %f", val)
-		}
-		return int64(val), nil
-	case float64:
-		if val > float64(math.MaxInt64) || val < float64(math.MinInt64) {
-			return 0, fmt.Errorf("float64 值超出 int64 范围: %f", val)
-		}
-		return int64(val), nil
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 int64: %v", err)
-		}
-		if f > float64(math.MaxInt64) || f < float64(math.MinInt64) {
-			return 0, fmt.Errorf("字符串数值超出 int64 范围: %f", f)
+		f := float64(val)
+		if f > math.MaxInt64 || f < math.MinInt64 {
+			return 0, fmt.Errorf("float32 overflow")
 		}
 		return int64(f), nil
-	case []byte:
-		s := string(val)
-		i, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 int64: %v", err)
+
+	case float64:
+		if val > math.MaxInt64 || val < math.MinInt64 {
+			return 0, fmt.Errorf("float64 overflow")
 		}
-		return i, nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+		return int64(val), nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i, nil
+		}
+
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, fmt.Errorf("string parse error: %v", err)
+		}
+
+		if f > math.MaxInt64 || f < math.MinInt64 {
+			return 0, fmt.Errorf("float overflow")
+		}
+
+		return int64(f), nil
+
+	// ===== []byte =====
+	case []byte:
+		return ToInt64Err(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return i, nil
+		}
+		if f, err := val.Float64(); err == nil {
+			return int64(f), nil
+		}
+		return 0, fmt.Errorf("json.Number parse error")
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToInt64Err(val.String())
+
+	case time.Time:
+		return val.Unix(), nil
 	}
+
+	// ===== 指针处理 =====
+	rv := reflect.ValueOf(v)
+
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToInt64Err(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToInt 将任意类型转换为 int，无法转换时返回 0
 func ToInt(v interface{}) int {
-	switch val := v.(type) {
-	case int:
-		return val
-	case int8:
-		return int(val)
-	case int16:
-		return int(val)
-	case int32:
-		return int(val)
-	case int64:
-		return int(val) // 注意溢出风险
-	case uint:
-		return int(val)
-	case uint8:
-		return int(val)
-	case uint16:
-		return int(val)
-	case uint32:
-		return int(val)
-	case uint64:
-		if val <= uint64(^uint(0)) { // 判断不溢出
-			return int(val)
-		}
-		return 0
-	case float32:
-		return int(val)
-	case float64:
-		if val > float64(^uint(0)) || val < float64(^uint(0))*-1 {
-			return 0 // 溢出返回0
-		}
-		return int(val)
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return 0
-		}
-		return int(f)
-	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
-		if err != nil {
-			return 0
-		}
-		return int(f)
-	default:
-		return 0
-	}
-}
-
-// ToIntErr 将任意类型转换为 int，无法转换或溢出时返回错误
-func ToIntErr(v interface{}) (int, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0
 	}
 
 	maxInt := int(^uint(0) >> 1)
 	minInt := -maxInt - 1
 
 	switch val := v.(type) {
+
+	// ===== int 系列 =====
 	case int:
-		return val, nil
-	case int8, int16, int32, int64:
-		i64 := int64(val.(int64)) // 先转换为 int64 统一处理
-		if i64 > int64(maxInt) || i64 < int64(minInt) {
-			return 0, fmt.Errorf("值超出 int 范围: %d", i64)
+		return val
+	case int8:
+		return int(val)
+	case int16:
+		return int(val)
+	case int32:
+		return int(val)
+	case int64:
+		if val > int64(maxInt) || val < int64(minInt) {
+			return 0
 		}
-		return int(i64), nil
-	case uint, uint8, uint16, uint32:
-		u64 := uint64(val.(uint64))
-		if u64 > uint64(maxInt) {
-			return 0, fmt.Errorf("值超出 int 范围: %d", u64)
+		return int(val)
+
+	// ===== uint =====
+	case uint:
+		if val > uint(maxInt) {
+			return 0
 		}
-		return int(u64), nil
+		return int(val)
+
+	case uint8, uint16, uint32:
+		return int(reflect.ValueOf(val).Uint())
+
 	case uint64:
 		if val > uint64(maxInt) {
-			return 0, fmt.Errorf("值超出 int 范围: %d", val)
+			return 0
 		}
-		return int(val), nil
+		return int(val)
+
+	// ===== float =====
 	case float32:
-		if val > float32(maxInt) || val < float32(minInt) {
-			return 0, fmt.Errorf("float32 值超出 int 范围: %f", val)
+		f := float64(val)
+		if f > float64(maxInt) || f < float64(minInt) {
+			return 0
 		}
-		return int(val), nil
+		return int(f)
+
 	case float64:
 		if val > float64(maxInt) || val < float64(minInt) {
-			return 0, fmt.Errorf("float64 值超出 int 范围: %f", val)
+			return 0
+		}
+		return int(val)
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
+		}
+		return 0
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return ToInt(i)
+		}
+
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return ToInt(f)
+		}
+
+		return 0
+
+	// ===== []byte =====
+	case []byte:
+		return ToInt(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return ToInt(i)
+		}
+		if f, err := val.Float64(); err == nil {
+			return ToInt(f)
+		}
+		return 0
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToInt(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return ToInt(val.Unix())
+	}
+
+	// ===== 指针处理 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0
+		}
+		return ToInt(rv.Elem().Interface())
+	}
+
+	return 0
+}
+
+// ToIntErr 将任意类型转换为 int，无法转换或溢出时返回错误
+func ToIntErr(v interface{}) (int, error) {
+	if v == nil {
+		return 0, fmt.Errorf("val is nil")
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+
+	switch val := v.(type) {
+
+	// ===== int =====
+	case int:
+		return val, nil
+
+	case int8:
+		return int(val), nil
+	case int16:
+		return int(val), nil
+	case int32:
+		return int(val), nil
+
+	case int64:
+		if val > int64(maxInt) || val < int64(minInt) {
+			return 0, fmt.Errorf("int64 overflow")
 		}
 		return int(val), nil
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 int: %v", err)
+
+	// ===== uint =====
+	case uint:
+		if val > uint(maxInt) {
+			return 0, fmt.Errorf("uint overflow")
 		}
+		return int(val), nil
+
+	case uint8, uint16, uint32:
+		return int(reflect.ValueOf(val).Uint()), nil
+
+	case uint64:
+		if val > uint64(maxInt) {
+			return 0, fmt.Errorf("uint64 overflow")
+		}
+		return int(val), nil
+
+	// ===== float =====
+	case float32:
+		f := float64(val)
 		if f > float64(maxInt) || f < float64(minInt) {
-			return 0, fmt.Errorf("字符串数值超出 int 范围: %f", f)
+			return 0, fmt.Errorf("float32 overflow")
 		}
 		return int(f), nil
-	case []byte:
-		s := string(val)
+
+	case float64:
+		if val > float64(maxInt) || val < float64(minInt) {
+			return 0, fmt.Errorf("float64 overflow")
+		}
+		return int(val), nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return ToIntErr(i)
+		}
+
 		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 int: %v", err)
+			return 0, fmt.Errorf("string parse error: %v", err)
 		}
+
 		if f > float64(maxInt) || f < float64(minInt) {
-			return 0, fmt.Errorf("[]byte 数值超出 int 范围: %f", f)
+			return 0, fmt.Errorf("float overflow")
 		}
+
 		return int(f), nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+
+	// ===== []byte =====
+	case []byte:
+		return ToIntErr(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return ToIntErr(i)
+		}
+		if f, err := val.Float64(); err == nil {
+			return ToIntErr(f)
+		}
+		return 0, fmt.Errorf("json.Number parse error")
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToIntErr(val.String())
+
+	case time.Time:
+		return ToIntErr(val.Unix())
 	}
+
+	// ===== 指针处理 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToIntErr(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToUint32 将任意类型转换为 uint32，无法转换或溢出时返回 0
 func ToUint32(v interface{}) uint32 {
+	if v == nil {
+		return 0
+	}
+
+	max := uint64(^uint32(0))
+
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		if val < 0 {
 			return 0
 		}
-		return uint32(val)
+		return ToUint32(int64(val))
+
 	case int8:
 		if val < 0 {
 			return 0
 		}
 		return uint32(val)
+
 	case int16:
 		if val < 0 {
 			return 0
 		}
 		return uint32(val)
+
 	case int32:
 		if val < 0 {
 			return 0
 		}
 		return uint32(val)
+
 	case int64:
-		if val < 0 || val > int64(^uint32(0)) {
+		if val < 0 || uint64(val) > max {
 			return 0
 		}
 		return uint32(val)
+
+	// ===== uint =====
 	case uint:
-		if val > uint(^uint32(0)) {
+		if uint64(val) > max {
 			return 0
 		}
 		return uint32(val)
-	case uint8, uint16, uint32:
-		return uint32(val.(uint64)) // 类型断言兼容
+
+	case uint8:
+		return uint32(val)
+	case uint16:
+		return uint32(val)
+	case uint32:
+		return val
+
 	case uint64:
-		if val > uint64(^uint32(0)) {
+		if val > max {
 			return 0
 		}
 		return uint32(val)
+
+	// ===== float =====
 	case float32:
-		if val < 0 || val > float32(^uint32(0)) {
+		f := float64(val)
+		if f < 0 || f > float64(max) {
 			return 0
 		}
-		return uint32(val)
+		return uint32(f)
+
 	case float64:
-		if val < 0 || val > float64(^uint32(0)) {
+		if val < 0 || val > float64(max) {
 			return 0
 		}
 		return uint32(val)
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil || f < 0 || f > float64(^uint32(0)) {
-			return 0
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
 		}
-		return uint32(f)
-	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
-		if err != nil || f < 0 || f > float64(^uint32(0)) {
-			return 0
-		}
-		return uint32(f)
-	default:
 		return 0
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+
+		if u, err := strconv.ParseUint(s, 10, 32); err == nil {
+			return uint32(u)
+		}
+
+		if f, err := strconv.ParseFloat(s, 64); err == nil && f >= 0 && f <= float64(max) {
+			return uint32(f)
+		}
+
+		return 0
+
+	// ===== []byte =====
+	case []byte:
+		return ToUint32(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil && i >= 0 {
+			return ToUint32(i)
+		}
+		if f, err := val.Float64(); err == nil {
+			return ToUint32(f)
+		}
+		return 0
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToUint32(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return ToUint32(val.Unix())
 	}
+
+	// ===== 指针 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0
+		}
+		return ToUint32(rv.Elem().Interface())
+	}
+
+	return 0
 }
 
 // ToUint32Err 将任意类型转换为 uint32，无法转换或溢出时返回错误
 func ToUint32Err(v interface{}) (uint32, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0, fmt.Errorf("val is nil")
 	}
 
-	maxUint32 := ^uint32(0)
+	max := uint64(^uint32(0))
 
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
+		if val < 0 || uint64(val) > max {
+			return 0, fmt.Errorf("int overflow")
+		}
+		return uint32(val), nil
+
+	case int8:
 		if val < 0 {
-			return 0, fmt.Errorf("int 值为负数: %d", val)
-		}
-		if val > int(maxUint32) {
-			return 0, fmt.Errorf("int 值超出 uint32 范围: %d", val)
+			return 0, fmt.Errorf("negative int8")
 		}
 		return uint32(val), nil
-	case int8, int16, int32, int64:
-		i64 := int64(val.(int64))
-		if i64 < 0 || i64 > int64(maxUint32) {
-			return 0, fmt.Errorf("值超出 uint32 范围: %d", i64)
+
+	case int16:
+		if val < 0 {
+			return 0, fmt.Errorf("negative int16")
 		}
-		return uint32(i64), nil
-	case uint, uint8, uint16, uint32:
-		u64 := uint64(val.(uint64))
-		if u64 > uint64(maxUint32) {
-			return 0, fmt.Errorf("值超出 uint32 范围: %d", u64)
+		return uint32(val), nil
+
+	case int32:
+		if val < 0 {
+			return 0, fmt.Errorf("negative int32")
 		}
-		return uint32(u64), nil
+		return uint32(val), nil
+
+	case int64:
+		if val < 0 || uint64(val) > max {
+			return 0, fmt.Errorf("int64 overflow")
+		}
+		return uint32(val), nil
+
+	// ===== uint =====
+	case uint:
+		if uint64(val) > max {
+			return 0, fmt.Errorf("uint overflow")
+		}
+		return uint32(val), nil
+
+	case uint8:
+		return uint32(val), nil
+	case uint16:
+		return uint32(val), nil
+	case uint32:
+		return val, nil
+
 	case uint64:
-		if val > uint64(maxUint32) {
-			return 0, fmt.Errorf("uint64 值超出 uint32 范围: %d", val)
+		if val > max {
+			return 0, fmt.Errorf("uint64 overflow")
 		}
 		return uint32(val), nil
+
+	// ===== float =====
 	case float32:
-		if val < 0 || val > float32(maxUint32) {
-			return 0, fmt.Errorf("float32 值超出 uint32 范围: %f", val)
-		}
-		return uint32(val), nil
-	case float64:
-		if val < 0 || val > float64(maxUint32) {
-			return 0, fmt.Errorf("float64 值超出 uint32 范围: %f", val)
-		}
-		return uint32(val), nil
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 uint32: %v", err)
-		}
-		if f < 0 || f > float64(maxUint32) {
-			return 0, fmt.Errorf("字符串数值超出 uint32 范围: %f", f)
+		f := float64(val)
+		if f < 0 || f > float64(max) {
+			return 0, fmt.Errorf("float32 overflow")
 		}
 		return uint32(f), nil
-	case []byte:
-		s := string(val)
+
+	case float64:
+		if val < 0 || val > float64(max) {
+			return 0, fmt.Errorf("float64 overflow")
+		}
+		return uint32(val), nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+
+		if u, err := strconv.ParseUint(s, 10, 32); err == nil {
+			return uint32(u), nil
+		}
+
 		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 uint32: %v", err)
+			return 0, fmt.Errorf("string parse error: %v", err)
 		}
-		if f < 0 || f > float64(maxUint32) {
-			return 0, fmt.Errorf("[]byte 数值超出 uint32 范围: %f", f)
+
+		if f < 0 || f > float64(max) {
+			return 0, fmt.Errorf("float overflow")
 		}
+
 		return uint32(f), nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+
+	// ===== []byte =====
+	case []byte:
+		return ToUint32Err(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		if i, err := val.Int64(); err == nil && i >= 0 {
+			return ToUint32Err(i)
+		}
+		if f, err := val.Float64(); err == nil {
+			return ToUint32Err(f)
+		}
+		return 0, fmt.Errorf("json.Number parse error")
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToUint32Err(val.String())
+
+	case time.Time:
+		return ToUint32Err(val.Unix())
 	}
+
+	// ===== 指针 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToUint32Err(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToFloat64 将任意类型转换为 float64，无法转换时返回 0
 func ToFloat64(v interface{}) float64 {
+	if v == nil {
+		return 0
+	}
+
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		return float64(val)
 	case int8:
@@ -766,6 +1229,8 @@ func ToFloat64(v interface{}) float64 {
 		return float64(val)
 	case int64:
 		return float64(val)
+
+	// ===== uint =====
 	case uint:
 		return float64(val)
 	case uint8:
@@ -776,34 +1241,80 @@ func ToFloat64(v interface{}) float64 {
 		return float64(val)
 	case uint64:
 		return float64(val)
+
+	// ===== float =====
 	case float32:
 		return float64(val)
 	case float64:
 		return val
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return 0
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
 		}
-		return f
-	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
-		if err != nil {
-			return 0
-		}
-		return f
-	default:
 		return 0
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0
+		}
+		return f
+
+	// ===== []byte =====
+	case []byte:
+		return ToFloat64(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		f, err := val.Float64()
+		if err != nil {
+			return 0
+		}
+		return f
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToFloat64(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return float64(val.Unix())
+
+	// ===== rune slice =====
+	case []rune:
+		return ToFloat64(string(val))
 	}
+
+	// ===== 指针统一处理 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0
+		}
+		return ToFloat64(rv.Elem().Interface())
+	}
+
+	return 0
 }
 
 // ToFloat64Err 将任意类型转换为 float64，无法转换时返回错误
 func ToFloat64Err(v interface{}) (float64, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0, fmt.Errorf("val is nil")
 	}
 
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		return float64(val), nil
 	case int8:
@@ -814,6 +1325,8 @@ func ToFloat64Err(v interface{}) (float64, error) {
 		return float64(val), nil
 	case int64:
 		return float64(val), nil
+
+	// ===== uint =====
 	case uint:
 		return float64(val), nil
 	case uint8:
@@ -824,30 +1337,75 @@ func ToFloat64Err(v interface{}) (float64, error) {
 		return float64(val), nil
 	case uint64:
 		return float64(val), nil
+
+	// ===== float =====
 	case float32:
 		return float64(val), nil
 	case float64:
 		return val, nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
 	case string:
-		f, err := strconv.ParseFloat(val, 64)
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0, fmt.Errorf("empty string")
+		}
+		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 float64: %v", err)
+			return 0, fmt.Errorf("string parse error: %v", err)
 		}
 		return f, nil
+
+	// ===== []byte =====
 	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
-		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 float64: %v", err)
-		}
-		return f, nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+		return ToFloat64Err(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		return val.Float64()
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToFloat64Err(val.String())
+
+	case error:
+		return 0, fmt.Errorf("cannot convert error to float64")
+
+	case time.Time:
+		return float64(val.Unix()), nil
+
+	case []rune:
+		return ToFloat64Err(string(val))
 	}
+
+	// ===== 指针 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToFloat64Err(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToFloat 将任意类型转换为 float32，无法转换时返回 0
 func ToFloat(v interface{}) float32 {
+	if v == nil {
+		return 0
+	}
+
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		return float32(val)
 	case int8:
@@ -858,6 +1416,8 @@ func ToFloat(v interface{}) float32 {
 		return float32(val)
 	case int64:
 		return float32(val)
+
+	// ===== uint =====
 	case uint:
 		return float32(val)
 	case uint8:
@@ -868,34 +1428,80 @@ func ToFloat(v interface{}) float32 {
 		return float32(val)
 	case uint64:
 		return float32(val)
+
+	// ===== float =====
 	case float32:
 		return val
 	case float64:
 		return float32(val)
-	case string:
-		f, err := strconv.ParseFloat(val, 32)
-		if err != nil {
-			return 0
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
 		}
-		return float32(f)
-	case []byte:
-		f, err := strconv.ParseFloat(string(val), 32)
-		if err != nil {
-			return 0
-		}
-		return float32(f)
-	default:
 		return 0
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0
+		}
+		f, err := strconv.ParseFloat(s, 32)
+		if err != nil {
+			return 0
+		}
+		return float32(f)
+
+	// ===== []byte =====
+	case []byte:
+		return ToFloat(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		f, err := val.Float64()
+		if err != nil {
+			return 0
+		}
+		return float32(f)
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToFloat(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return float32(val.Unix())
+
+	// ===== rune =====
+	case []rune:
+		return ToFloat(string(val))
 	}
+
+	// ===== 指针统一处理 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0
+		}
+		return ToFloat(rv.Elem().Interface())
+	}
+
+	return 0
 }
 
 // ToFloatErr 将任意类型转换为 float32，无法转换时返回错误
 func ToFloatErr(v interface{}) (float32, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0, fmt.Errorf("val is nil")
 	}
 
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		return float32(val), nil
 	case int8:
@@ -906,6 +1512,8 @@ func ToFloatErr(v interface{}) (float32, error) {
 		return float32(val), nil
 	case int64:
 		return float32(val), nil
+
+	// ===== uint =====
 	case uint:
 		return float32(val), nil
 	case uint8:
@@ -916,30 +1524,79 @@ func ToFloatErr(v interface{}) (float32, error) {
 		return float32(val), nil
 	case uint64:
 		return float32(val), nil
+
+	// ===== float =====
 	case float32:
 		return val, nil
 	case float64:
 		return float32(val), nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
 	case string:
-		f, err := strconv.ParseFloat(val, 32)
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0, fmt.Errorf("empty string")
+		}
+		f, err := strconv.ParseFloat(s, 32)
 		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 float32: %v", err)
+			return 0, fmt.Errorf("string parse error: %v", err)
 		}
 		return float32(f), nil
+
+	// ===== []byte =====
 	case []byte:
-		f, err := strconv.ParseFloat(string(val), 32)
+		return ToFloatErr(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		f, err := val.Float64()
 		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 float32: %v", err)
+			return 0, err
 		}
 		return float32(f), nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToFloatErr(val.String())
+
+	case error:
+		return 0, fmt.Errorf("cannot convert error to float32")
+
+	case time.Time:
+		return float32(val.Unix()), nil
+
+	case []rune:
+		return ToFloatErr(string(val))
 	}
+
+	// ===== 指针 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToFloatErr(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToUint64 将任意类型转换为 uint64，无法转换或负数时返回 0
 func ToUint64(v interface{}) uint64 {
+	if v == nil {
+		return 0
+	}
+
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		if val < 0 {
 			return 0
@@ -965,6 +1622,8 @@ func ToUint64(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(val)
+
+	// ===== uint =====
 	case uint:
 		return uint64(val)
 	case uint8:
@@ -975,6 +1634,8 @@ func ToUint64(v interface{}) uint64 {
 		return uint64(val)
 	case uint64:
 		return val
+
+	// ===== float =====
 	case float32:
 		if val < 0 {
 			return 0
@@ -985,88 +1646,185 @@ func ToUint64(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(val)
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil || f < 0 {
-			return 0
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1
 		}
-		return uint64(f)
-	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
-		if err != nil || f < 0 {
-			return 0
-		}
-		return uint64(f)
-	default:
 		return 0
+
+	// ===== string =====
+	case string:
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || f < 0 {
+			return 0
+		}
+		return uint64(f)
+
+	// ===== []byte =====
+	case []byte:
+		return ToUint64(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		i, err := val.Int64()
+		if err != nil || i < 0 {
+			return 0
+		}
+		return uint64(i)
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToUint64(val.String())
+
+	case error:
+		return 0
+
+	case time.Time:
+		return uint64(val.Unix())
+
+	// ===== rune =====
+	case []rune:
+		return ToUint64(string(val))
 	}
+
+	// ===== 指针处理 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0
+		}
+		return ToUint64(rv.Elem().Interface())
+	}
+
+	return 0
 }
 
 // ToUint64Err 将任意类型转换为 uint64，无法转换或为负数时返回错误
 func ToUint64Err(v interface{}) (uint64, error) {
 	if v == nil {
-		return 0, fmt.Errorf("值为 nil")
+		return 0, fmt.Errorf("val is nil")
 	}
 
 	switch val := v.(type) {
+
+	// ===== int =====
 	case int:
 		if val < 0 {
-			return 0, fmt.Errorf("int 值为负数: %d", val)
+			return 0, fmt.Errorf("int < 0: %d", val)
 		}
 		return uint64(val), nil
 	case int8:
 		if val < 0 {
-			return 0, fmt.Errorf("int8 值为负数: %d", val)
+			return 0, fmt.Errorf("int8 < 0: %d", val)
 		}
 		return uint64(val), nil
 	case int16:
 		if val < 0 {
-			return 0, fmt.Errorf("int16 值为负数: %d", val)
+			return 0, fmt.Errorf("int16 < 0: %d", val)
 		}
 		return uint64(val), nil
 	case int32:
 		if val < 0 {
-			return 0, fmt.Errorf("int32 值为负数: %d", val)
+			return 0, fmt.Errorf("int32 < 0: %d", val)
 		}
 		return uint64(val), nil
 	case int64:
 		if val < 0 {
-			return 0, fmt.Errorf("int64 值为负数: %d", val)
+			return 0, fmt.Errorf("int64 < 0: %d", val)
 		}
 		return uint64(val), nil
-	case uint, uint8, uint16, uint32, uint64:
-		return uint64(val.(uint64)), nil
+
+	// ===== uint =====
+	case uint:
+		return uint64(val), nil
+	case uint8:
+		return uint64(val), nil
+	case uint16:
+		return uint64(val), nil
+	case uint32:
+		return uint64(val), nil
+	case uint64:
+		return val, nil
+
+	// ===== float =====
 	case float32:
 		if val < 0 {
-			return 0, fmt.Errorf("float32 值为负数: %f", val)
+			return 0, fmt.Errorf("float32 < 0: %f", val)
 		}
 		return uint64(val), nil
 	case float64:
 		if val < 0 {
-			return 0, fmt.Errorf("float64 值为负数: %f", val)
+			return 0, fmt.Errorf("float64 < 0: %f", val)
 		}
 		return uint64(val), nil
+
+	// ===== bool =====
+	case bool:
+		if val {
+			return 1, nil
+		}
+		return 0, nil
+
+	// ===== string =====
 	case string:
-		f, err := strconv.ParseFloat(val, 64)
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return 0, fmt.Errorf("empty string")
+		}
+		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return 0, fmt.Errorf("字符串无法转换为 uint64: %v", err)
+			return 0, fmt.Errorf("parse error: %v", err)
 		}
 		if f < 0 {
-			return 0, fmt.Errorf("字符串数值为负数: %f", f)
+			return 0, fmt.Errorf("negative value: %f", f)
 		}
 		return uint64(f), nil
+
+	// ===== []byte =====
 	case []byte:
-		f, err := strconv.ParseFloat(string(val), 64)
+		return ToUint64Err(string(val))
+
+	// ===== json.Number =====
+	case json.Number:
+		i, err := val.Int64()
 		if err != nil {
-			return 0, fmt.Errorf("[]byte 无法转换为 uint64: %v", err)
+			return 0, err
 		}
-		if f < 0 {
-			return 0, fmt.Errorf("[]byte 数值为负数: %f", f)
+		if i < 0 {
+			return 0, fmt.Errorf("negative json.Number")
 		}
-		return uint64(f), nil
-	default:
-		return 0, fmt.Errorf("未知类型: %T", v)
+		return uint64(i), nil
+
+	// ===== 接口 =====
+	case fmt.Stringer:
+		return ToUint64Err(val.String())
+
+	case error:
+		return 0, fmt.Errorf("cannot convert error to uint64")
+
+	case time.Time:
+		return uint64(val.Unix()), nil
+
+	case []rune:
+		return ToUint64Err(string(val))
 	}
+
+	// ===== 指针 =====
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("nil pointer")
+		}
+		return ToUint64Err(rv.Elem().Interface())
+	}
+
+	return 0, fmt.Errorf("unsupported type: %T", v)
 }
 
 // HexStringToBytes 将十六进制字符串转换为 []byte
