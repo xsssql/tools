@@ -469,14 +469,7 @@ func ToStrErr(v interface{}) (string, error) {
 			return "", err
 		}
 		return string(b), nil
-
-	case map[string]any:
-		b, err := json.Marshal(val)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-
+		
 	case map[string]interface{}:
 		b, err := json.Marshal(val)
 		if err != nil {
