@@ -113,66 +113,221 @@ func CreateDir(path string) error {
 }
 
 // ToStr 将任意类型转换为 string，无法转换时返回 "" 不适用高标准环境
+// ToStr 将任意类型转换为 string，无法转换时返回 ""
+// 不适用于高安全/高精度场景
 func ToStr(v interface{}) string {
 	switch val := v.(type) {
+
+	// =========================
+	// string
+	// =========================
 	case string:
 		return val
+
 	case *string:
 		if val != nil {
 			return *val
 		}
+
 	case []byte:
 		return string(val)
-	case *([]byte):
+
+	case *[]byte:
 		if val != nil {
 			return string(*val)
 		}
+
+	case json.RawMessage:
+		return string(val)
+
+	case *json.RawMessage:
+		if val != nil {
+			return string(*val)
+		}
+
+	case []rune:
+		return string(val)
+
+	// =========================
+	// int
+	// =========================
 	case int:
 		return strconv.Itoa(val)
+
 	case *int:
 		if val != nil {
 			return strconv.Itoa(*val)
 		}
+
+	case int8:
+		return strconv.FormatInt(int64(val), 10)
+
+	case *int8:
+		if val != nil {
+			return strconv.FormatInt(int64(*val), 10)
+		}
+
+	case int16:
+		return strconv.FormatInt(int64(val), 10)
+
+	case *int16:
+		if val != nil {
+			return strconv.FormatInt(int64(*val), 10)
+		}
+
+	case int32:
+		return strconv.FormatInt(int64(val), 10)
+
+	case *int32:
+		if val != nil {
+			return strconv.FormatInt(int64(*val), 10)
+		}
+
 	case int64:
 		return strconv.FormatInt(val, 10)
+
 	case *int64:
 		if val != nil {
 			return strconv.FormatInt(*val, 10)
 		}
-	case int32:
-		return strconv.Itoa(int(val))
-	case *int32:
+
+	// =========================
+	// uint
+	// =========================
+	case uint:
+		return strconv.FormatUint(uint64(val), 10)
+
+	case *uint:
 		if val != nil {
-			return strconv.Itoa(int(*val))
+			return strconv.FormatUint(uint64(*val), 10)
 		}
-	case float64:
-		return fmt.Sprintf("%f", val)
-	case *float64:
+
+	case uint8:
+		return strconv.FormatUint(uint64(val), 10)
+
+	case *uint8:
 		if val != nil {
-			return fmt.Sprintf("%f", *val)
+			return strconv.FormatUint(uint64(*val), 10)
 		}
+
+	case uint16:
+		return strconv.FormatUint(uint64(val), 10)
+
+	case *uint16:
+		if val != nil {
+			return strconv.FormatUint(uint64(*val), 10)
+		}
+
+	case uint32:
+		return strconv.FormatUint(uint64(val), 10)
+
+	case *uint32:
+		if val != nil {
+			return strconv.FormatUint(uint64(*val), 10)
+		}
+
+	case uint64:
+		return strconv.FormatUint(val, 10)
+
+	case *uint64:
+		if val != nil {
+			return strconv.FormatUint(*val, 10)
+		}
+
+	case uintptr:
+		return strconv.FormatUint(uint64(val), 10)
+
+	case *uintptr:
+		if val != nil {
+			return strconv.FormatUint(uint64(*val), 10)
+		}
+
+	// =========================
+	// float
+	// =========================
 	case float32:
-		return fmt.Sprintf("%f", val)
+		return strconv.FormatFloat(float64(val), 'f', -1, 32)
+
 	case *float32:
 		if val != nil {
-			return fmt.Sprintf("%f", *val)
+			return strconv.FormatFloat(float64(*val), 'f', -1, 32)
 		}
+
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+
+	case *float64:
+		if val != nil {
+			return strconv.FormatFloat(*val, 'f', -1, 64)
+		}
+
+	// =========================
+	// bool
+	// =========================
 	case bool:
 		return strconv.FormatBool(val)
+
 	case *bool:
 		if val != nil {
 			return strconv.FormatBool(*val)
 		}
+
+	// =========================
+	// json
+	// =========================
 	case json.Number:
 		return val.String()
-	default:
-		if v == nil {
-			return ""
+
+	case *json.Number:
+		if val != nil {
+			return val.String()
 		}
-		fmt.Printf("⚡ ToStr遇到未知类型：%T -> %+v\n", v, v)
-		return fmt.Sprintf("%v", v)
+
+	// =========================
+	// time
+	// =========================
+	case time.Time:
+		return val.Format(time.RFC3339Nano)
+
+	case *time.Time:
+		if val != nil {
+			return val.Format(time.RFC3339Nano)
+		}
+
+	// =========================
+	// error
+	// =========================
+	case error:
+		return val.Error()
+
+	// =========================
+	// fmt.Stringer
+	// =========================
+	case fmt.Stringer:
+		return val.String()
+
+	// =========================
+	// string slice
+	// =========================
+	case []string:
+		return strings.Join(val, ",")
+
+	case *[]string:
+		if val != nil {
+			return strings.Join(*val, ",")
+		}
 	}
-	return ""
+
+	// =========================
+	// fallback
+	// =========================
+	if v == nil {
+		return ""
+	}
+
+	fmt.Printf("⚡ ToStr遇到未知类型：%T -> %+v\n", v, v)
+
+	return fmt.Sprintf("%v", v)
 }
 
 // ToStrErr 将任意常见类型转为 string，支持 nil 检查 转换失败返回错误
@@ -188,65 +343,18 @@ func ToStr(v interface{}) string {
 //	s, err := ToStrErr(json.Number("99")) // "99", nil
 func ToStrErr(v interface{}) (string, error) {
 	if v == nil {
-		return "", fmt.Errorf("值为 nil")
+		return "", fmt.Errorf("nil value")
 	}
 
 	switch val := v.(type) {
+
 	case string:
 		return val, nil
 	case *string:
 		if val != nil {
 			return *val, nil
 		}
-		return "", fmt.Errorf("string 指针为 nil")
-
-	case int:
-		return strconv.Itoa(val), nil
-	case *int:
-		if val != nil {
-			return strconv.Itoa(*val), nil
-		}
-		return "", fmt.Errorf("int 指针为 nil")
-
-	case int64:
-		return strconv.FormatInt(val, 10), nil
-	case *int64:
-		if val != nil {
-			return strconv.FormatInt(*val, 10), nil
-		}
-		return "", fmt.Errorf("int64 指针为 nil")
-
-	case int32:
-		return strconv.Itoa(int(val)), nil
-	case *int32:
-		if val != nil {
-			return strconv.Itoa(int(*val)), nil
-		}
-		return "", fmt.Errorf("int32 指针为 nil")
-
-	case float64:
-		return fmt.Sprintf("%f", val), nil
-	case *float64:
-		if val != nil {
-			return fmt.Sprintf("%f", *val), nil
-		}
-		return "", fmt.Errorf("float64 指针为 nil")
-
-	case float32:
-		return fmt.Sprintf("%f", val), nil
-	case *float32:
-		if val != nil {
-			return fmt.Sprintf("%f", *val), nil
-		}
-		return "", fmt.Errorf("float32 指针为 nil")
-
-	case bool:
-		return strconv.FormatBool(val), nil
-	case *bool:
-		if val != nil {
-			return strconv.FormatBool(*val), nil
-		}
-		return "", fmt.Errorf("bool 指针为 nil")
+		return "", fmt.Errorf("nil *string")
 
 	case []byte:
 		return string(val), nil
@@ -254,14 +362,130 @@ func ToStrErr(v interface{}) (string, error) {
 		if val != nil {
 			return string(*val), nil
 		}
-		return "", fmt.Errorf("[]byte 指针为 nil")
+		return "", fmt.Errorf("nil *[]byte")
+
+	case json.RawMessage:
+		return string(val), nil
+	case *json.RawMessage:
+		if val != nil {
+			return string(*val), nil
+		}
+		return "", fmt.Errorf("nil *json.RawMessage")
+
+	case []rune:
+		return string(val), nil
+
+	case int:
+		return strconv.Itoa(val), nil
+	case *int:
+		if val != nil {
+			return strconv.Itoa(*val), nil
+		}
+		return "", fmt.Errorf("nil *int")
+
+	case int64:
+		return strconv.FormatInt(val, 10), nil
+	case *int64:
+		if val != nil {
+			return strconv.FormatInt(*val, 10), nil
+		}
+		return "", fmt.Errorf("nil *int64")
+
+	case int32:
+		return strconv.Itoa(int(val)), nil
+	case *int32:
+		if val != nil {
+			return strconv.Itoa(int(*val)), nil
+		}
+		return "", fmt.Errorf("nil *int32")
+
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64), nil
+	case *float64:
+		if val != nil {
+			return strconv.FormatFloat(*val, 'f', -1, 64), nil
+		}
+		return "", fmt.Errorf("nil *float64")
+
+	case float32:
+		return strconv.FormatFloat(float64(val), 'f', -1, 32), nil
+	case *float32:
+		if val != nil {
+			return strconv.FormatFloat(float64(*val), 'f', -1, 32), nil
+		}
+		return "", fmt.Errorf("nil *float32")
+
+	case bool:
+		return strconv.FormatBool(val), nil
+	case *bool:
+		if val != nil {
+			return strconv.FormatBool(*val), nil
+		}
+		return "", fmt.Errorf("nil *bool")
 
 	case json.Number:
 		return val.String(), nil
+	case *json.Number:
+		if val != nil {
+			return val.String(), nil
+		}
+		return "", fmt.Errorf("nil *json.Number")
 
-	default:
-		return "", fmt.Errorf("未知类型: %T", v)
+	case time.Time:
+		return val.Format(time.RFC3339Nano), nil
+	case *time.Time:
+		if val != nil {
+			return val.Format(time.RFC3339Nano), nil
+		}
+		return "", fmt.Errorf("nil *time.Time")
+
+	case error:
+		return val.Error(), nil
+	case *error:
+		if val != nil && *val != nil {
+			return (*val).Error(), nil
+		}
+		return "", fmt.Errorf("nil *error")
+
+	case fmt.Stringer:
+		return val.String(), nil
+	case *fmt.Stringer:
+		if val != nil {
+			return (*val).String(), nil
+		}
+		return "", fmt.Errorf("nil *fmt.Stringer")
+
+	case []string:
+		return strings.Join(val, ","), nil
+	case *[]string:
+		if val != nil {
+			return strings.Join(*val, ","), nil
+		}
+		return "", fmt.Errorf("nil *[]string")
+
+	case []any:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+
+	case map[string]any:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+
+	case map[string]interface{}:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	}
+
+	return "", fmt.Errorf("unsupported type: %T", v)
 }
 
 // ToBytes 将任意类型转换为 []byte，无法转换时返回空切片
